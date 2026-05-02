@@ -20,6 +20,7 @@ body { font-family:'Inter',sans-serif; background:#e2e8f0; color:#1e1e2f; min-he
   font-size:0.85rem; font-weight:500; cursor:pointer; border-bottom:2px solid transparent; transition:all .2s; }
 .nav-btn:hover { color:#4f46e5; }
 .nav-btn.active { color:#4f46e5; border-bottom-color:#4f46e5; font-weight:600; }
+.short-text { display: none; }
 
 .main { padding:24px 40px; }
 .section { display:none; }
@@ -158,6 +159,35 @@ body { font-family:'Inter',sans-serif; background:#e2e8f0; color:#1e1e2f; min-he
 .bar-lar { background: linear-gradient(90deg, #6366f1, #818cf8); }
 .bar-lpp { background: linear-gradient(90deg, #ec4899, #f472b6); }
 .timeline-grid-line { position:absolute; top:0; bottom:0; border-right:1px solid #f1f5f9; z-index:1; }
+
+@media (max-width: 768px) {
+  .header { padding: 12px 20px; }
+  .header h1 { font-size: 1.2rem; }
+  .nav { padding: 0 10px; gap: 0; justify-content: space-between; }
+  .nav-btn { padding: 12px 6px; font-size: 0.75rem; flex: 1; text-align: center; }
+  .full-text { display: none; }
+  .short-text { display: inline; }
+  
+  .main { padding: 16px 8px; }
+  
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; }
+  .controls > label { font-size: 0.75rem; margin-right: -4px; }
+  .controls select, .controls input[type="date"] { padding: 6px 8px; font-size: 0.75rem; }
+  
+  /* Order filters to top row */
+  .controls > label:nth-of-type(1), #filter-persona { order: 1; }
+  .controls > label:nth-of-type(2), #date-picker { order: 2; }
+  .week-nav { order: 3; width: 100%; justify-content: center; margin-top: 5px; }
+  .controls > div[style="flex:1"] { display: none; }
+  
+  .week-label { min-width: auto; font-size: 0.8rem; flex: 1; }
+  .week-nav button { padding: 6px 10px; }
+
+  .table-wrapper { margin: 0 -8px; border-radius: 0; border-left: none; border-right: none; }
+  .cronograma-table { font-size: 0.72rem; }
+  .turno-col, .turno-label { min-width: 85px !important; width: 85px !important; font-size: 0.68rem; padding: 4px 6px; }
+  .data-cell { font-size: 0.7rem; padding: 4px 4px; }
+}
 </style>
 </head>
 <body>
@@ -168,7 +198,7 @@ body { font-family:'Inter',sans-serif; background:#e2e8f0; color:#1e1e2f; min-he
   <div class="nav">
     <button class="nav-btn active" onclick="showSection('guardias')">Guardias</button>
     <button class="nav-btn" onclick="showSection('resumen')">Resumen</button>
-    <button class="nav-btn" onclick="showSection('findes')">Fines de Semana Largos</button>
+    <button class="nav-btn" onclick="showSection('findes')"><span class="full-text">Fines de Semana Largos</span><span class="short-text">Findes</span></button>
     <button class="nav-btn" onclick="showSection('lar')">LAR</button>
     <button class="nav-btn" onclick="showSection('lpp')">LPP</button>
     <button class="nav-btn" onclick="showSection('personal')">Personal</button>
