@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visor de Cronogramas - Kinesiologia</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Inter',sans-serif; background:#e2e8f0; color:#1e1e2f; min-height:100vh; }
+
+/* Header & Nav Sticky */
+.top-bar { position:sticky; top:0; z-index:100; background:#fff; }
+.header { background:#fff; padding:16px 40px; border-bottom:1px solid #e2e4ec; }
+.header h1 { font-size:1.4rem; font-weight:700; color:#1e1e2f; letter-spacing:-0.02em; }
+
+/* Nav tabs */
+.nav { display:flex; background:#fff; border-bottom:1px solid #e2e4ec; padding:0 40px; gap:4px; }
+.nav-btn { padding:12px 22px; border:none; background:none; color:#7c7f93; font-family:'Inter',sans-serif;
+  font-size:0.85rem; font-weight:500; cursor:pointer; border-bottom:2px solid transparent; transition:all .2s; }
+.nav-btn:hover { color:#4f46e5; }
+.nav-btn.active { color:#4f46e5; border-bottom-color:#4f46e5; font-weight:600; }
+
+.main { padding:24px 40px; }
+.section { display:none; }
+.section.active { display:block; }
+
+/* Controls bar */
+.controls { display:flex; align-items:center; gap:14px; margin-bottom:20px; flex-wrap:wrap; }
+.controls label { font-size:0.82rem; color:#7c7f93; font-weight:500; }
+.controls select, .controls input[type="date"] {
+  padding:7px 12px; border:1px solid #d1d5db; border-radius:8px; font-family:'Inter',sans-serif;
+  font-size:0.82rem; background:#fff; color:#1e1e2f; outline:none; }
+.controls select:focus, .controls input[type="date"]:focus { border-color:#4f46e5; box-shadow:0 0 0 3px rgba(79,70,229,0.1); }
+
+/* Week navigation */
+.week-nav { display:flex; align-items:center; gap:10px; }
+.week-nav button { padding:6px 14px; border:1px solid #d1d5db; background:#fff; border-radius:8px;
+  cursor:pointer; font-size:0.82rem; font-family:'Inter',sans-serif; color:#4f46e5; font-weight:500; transition:all .15s; }
+.week-nav button:hover:not(:disabled) { background:#4f46e5; color:#fff; border-color:#4f46e5; }
+.week-nav button:disabled { opacity:0.35; cursor:default; }
+.week-label { font-size:0.9rem; font-weight:600; color:#1e1e2f; min-width:220px; text-align:center; }
+
+/* Cronograma table */
+.table-wrapper { overflow-x:auto; border-radius:12px; border:1px solid #e2e4ec; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,0.04); }
+.cronograma-table { border-collapse:collapse; font-size:0.78rem; white-space:nowrap; width:100%; }
+.cronograma-table th, .cronograma-table td { padding:4px 8px; border:1px solid #d1d5db; text-align:center; }
+.cronograma-table thead th { background:#f8f9fc; color:#6b7085; font-weight:600; position:sticky; top:0; z-index:2; }
+.turno-col { position:sticky; left:0; z-index:3; min-width:130px; background:#f8f9fc !important; }
+.turno-label { position:sticky; left:0; z-index:1; font-weight:600; text-align:left !important; min-width:130px; }
+.fecha-header { display:flex; flex-direction:column; gap:1px; }
+.dia-nombre { font-size:0.7rem; color:#9ca3af; }
+.fecha-num { font-size:0.78rem; }
+.finde-header { background:#f1f5f9 !important; color:#6366f1 !important; }
+.finde-cell { background-color: rgba(255, 255, 255, 0.5) !important; }
+.data-cell { color:#374151; font-size:0.75rem; }
+
+/* Row colors by shift and unit */
+.row-manana-uti, .row-manana-especial { background:#dcfce7; }
+.row-manana-uti .turno-label, .row-manana-especial .turno-label { background:#dcfce7; color:#166534; }
+.row-manana-uco { background:#bbf7d0; }
+.row-manana-uco .turno-label { background:#bbf7d0; color:#166534; }
+
+.row-tarde-uti, .row-tarde-especial { background:#fef9c3; }
+.row-tarde-uti .turno-label, .row-tarde-especial .turno-label { background:#fef9c3; color:#854d0e; }
+.row-tarde-uco { background:#fef08a; }
+.row-tarde-uco .turno-label { background:#fef08a; color:#854d0e; }
+
+.row-dia-uti { background:#e0f2fe; }
+.row-dia-uti .turno-label { background:#e0f2fe; color:#0369a1; }
+.row-dia-uco { background:#bae6fd; }
+.row-dia-uco .turno-label { background:#bae6fd; color:#0369a1; }
+
+.row-noche { background:#ede9fe; }
+.row-noche .turno-label { background:#ede9fe; color:#5b21b6; }
+
+/* Resumen */
+.resumen-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+.resumen-table th { text-align:left; padding:10px 14px; background:#f8f9fc; color:#6b7085; font-weight:600; border-bottom:2px solid #e2e4ec; cursor:pointer; user-select:none; }
+.resumen-table th:hover { background:#f1f5f9; }
+.sort-icon { font-size:0.65rem; margin-left:4px; color:#6366f1; }
+.resumen-table td { padding:9px 14px; border-bottom:1px solid #d1d5db; }
+.resumen-table tr:hover { background:#f0f1ff; }
+.nombre-cell { font-weight:500; color:#1e1e2f; }
+.numero { text-align:center; font-variant-numeric:tabular-nums; color:#4b5563; }
+.bar-container { width:100%; height:10px; background:#e5e7eb; border-radius:5px; overflow:hidden; position:relative; }
+.bar { height:100%; background:linear-gradient(90deg,#6366f1,#818cf8); border-radius:5px; transition:width .5s ease; }
+.bar-text { font-size:0.68rem; color:#6b7085; margin-top:2px; white-space: nowrap; }
+.resumen-table th:nth-child(3),
+.resumen-table th:nth-child(4),
+.resumen-table th:nth-child(5) {
+  width: 90px;
+}
+.resumen-table th:nth-child(6) {
+  min-width: 200px;
+}
+.btn-historico { padding:7px 16px; border:1px solid #4f46e5; background:#fff; color:#4f46e5; border-radius:8px;
+  cursor:pointer; font-family:'Inter',sans-serif; font-size:0.82rem; font-weight:500; transition:all .15s; }
+.btn-historico:hover { background:#4f46e5; color:#fff; }
+.btn-historico.active { background:#4f46e5; color:#fff; }
+
+/* Personal cards */
+.personas-grid { display:flex; flex-wrap:wrap; gap:8px; }
+.persona-card { display:flex; flex-direction:column; padding:10px 16px; border-radius:8px;
+  border:1px solid #e2e4ec; background:#fff; min-width:140px; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
+.persona-nombre { font-weight:500; font-size:0.82rem; color:#1e1e2f; }
+.persona-rol { font-size:0.72rem; color:#7c7f93; margin-top:2px; }
+.persona-card.jefe { border-left:3px solid #f59e0b; }
+.persona-card.coordinador { border-left:3px solid #6366f1; }
+.persona-card.nocturno { border-left:3px solid #8b5cf6; }
+.persona-card.rotativo { border-left:3px solid #06b6d4; }
+
+/* Bloques finde largo */
+.bloques-grid { display:flex; flex-direction:column; gap:12px; }
+.bloque-card { padding:16px 20px; border-radius:12px; background:#fff; border:1px solid #e2e4ec;
+  display:flex; flex-direction:column; gap:10px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
+.bloque-header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:8px; }
+.bloque-fechas { font-weight:600; font-size:0.95rem; color:#1e1e2f; }
+.bloque-tipo { font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:6px; text-transform:uppercase; }
+.tipo-3 { border-left:4px solid #f59e0b; }
+.tipo-3 .bloque-tipo { background:#fef3c7; color:#b45309; }
+.tipo-4 { border-left:4px solid #ef4444; }
+.tipo-4 .bloque-tipo { background:#fee2e2; color:#b91c1c; }
+.bloque-personal { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+.badge-persona { background:#f1f5f9; color:#475569; padding:3px 10px; border-radius:15px; font-size:0.75rem; font-weight:500; border:1px solid #e2e8f0; }
+
+.section-title { font-size:1.1rem; font-weight:600; color:#1e1e2f; margin-bottom:16px; padding-bottom:8px; border-bottom:1px solid #e2e4ec; }
+.group-title { font-size:0.9rem; font-weight:700; color:#4b5563; margin:15px 0 10px 0; text-transform:uppercase; letter-spacing:0.05em; }
+.personal-top-row { display:flex; gap:60px; margin-bottom:20px; align-items:flex-start; }
+.personal-col { min-width:180px; }
+.resumen-wrapper { max-height:calc(100vh - 220px); overflow-y:auto; border-radius:12px; border:1px solid #e2e4ec; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,0.04); }
+.resumen-table thead th { position:sticky; top:0; z-index:5; }
+.empty-msg { color:#9ca3af; font-size:0.85rem; padding:12px 0; }
+
+/* Timeline Styles */
+.timeline-container { display:flex; flex-direction:column; gap:12px; height:calc(100vh - 180px); }
+.timeline-main { overflow-x:auto; overflow-y:auto; background:#fff; border-radius:12px; border:1px solid #e2e4ec; position:relative; flex:1; box-shadow:0 1px 6px rgba(0,0,0,0.04); scrollbar-width: none; -ms-overflow-style: none; }
+.timeline-main::-webkit-scrollbar { display: none; }
+.timeline-minimap-container { height:50px; background:#fff; border-radius:8px; border:1px solid #e2e4ec; position:relative; flex-shrink:0; overflow:hidden; cursor:pointer; user-select:none; }
+.minimap-bar { position:absolute; height:3px; border-radius:1.5px; opacity:0.7; }
+.minimap-viewport { position:absolute; top:0; bottom:0; background:rgba(99, 102, 241, 0.1); border:1px solid rgba(99, 102, 241, 0.6); border-radius:4px; pointer-events:none; box-shadow: 0 0 0 9999px rgba(255,255,255,0.4); }
+.minimap-today { position:absolute; top:0; bottom:0; width:2px; background:rgba(239, 68, 68, 0.8); z-index:5; }
+.minimap-month-line { position:absolute; top:0; bottom:0; border-left:1px dashed #e2e8f0; }
+.minimap-month-label { position:absolute; bottom:2px; font-size:0.6rem; color:#9ca3af; margin-left:4px; font-weight:600; }
+.today-line { position:absolute; top:0; bottom:0; width:2px; background:rgba(239, 68, 68, 0.4); z-index:4; pointer-events:none; }
+.today-label { position:absolute; top:4px; left:6px; background:#fee2e2; color:#ef4444; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px; border:1px solid #fca5a5; pointer-events:none; }
+.timeline-inner { display:inline-block; min-width:100%; }
+.timeline-header { display:flex; border-bottom:1px solid #edf0f5; position:sticky; top:0; background:#fff; z-index:10; }
+.timeline-month { padding:10px 12px; border-right:1px solid #edf0f5; font-size:0.75rem; font-weight:600; color:#6b7085; text-transform:uppercase; background:#f8f9fc; flex-shrink: 0; }
+.timeline-month:first-child { border-top-left-radius: 11px; }
+.timeline-month:last-child { border-right: none; border-top-right-radius: 11px; }
+.timeline-rows { position:relative; padding:10px 0; }
+.timeline-row { height:40px; border-bottom:1px solid #f8f9fc; position:relative; display:flex; align-items:center; }
+.timeline-bar { position:absolute; height:28px; border-radius:14px; display:flex; align-items:center; padding:0 12px;
+  font-size:0.72rem; font-weight:600; color:#fff; white-space:nowrap; box-shadow:0 2px 4px rgba(0,0,0,0.1);
+  transition: transform 0.2s; cursor:default; z-index:2; }
+.timeline-bar:hover { transform: scaleY(1.1); z-index:5; }
+.bar-lar { background: linear-gradient(90deg, #6366f1, #818cf8); }
+.bar-lpp { background: linear-gradient(90deg, #ec4899, #f472b6); }
+.timeline-grid-line { position:absolute; top:0; bottom:0; border-right:1px solid #f1f5f9; z-index:1; }
+</style>
+</head>
+<body>
+<div class="top-bar">
+  <div class="header">
+    <h1>Visor de Cronogramas</h1>
+  </div>
+  <div class="nav">
+    <button class="nav-btn active" onclick="showSection('guardias')">Guardias</button>
+    <button class="nav-btn" onclick="showSection('resumen')">Resumen</button>
+    <button class="nav-btn" onclick="showSection('findes')">Fines de Semana Largos</button>
+    <button class="nav-btn" onclick="showSection('lar')">LAR</button>
+    <button class="nav-btn" onclick="showSection('lpp')">LPP</button>
+    <button class="nav-btn" onclick="showSection('personal')">Personal</button>
+  </div>
+</div>
+<div class="main">
+
+  <!-- GUARDIAS -->
+  <div class="section active" id="sec-guardias">
+    <div class="controls">
+      <label>Persona:</label>
+      <select id="filter-persona" onchange="onPersonFilter()"><option value="">Todos</option></select>
+      <div style="flex:1"></div>
+      <div class="week-nav">
+        <button id="btn-prev" onclick="prevWeek()">← Anterior</button>
+        <span class="week-label" id="week-label"></span>
+        <button id="btn-next" onclick="nextWeek()">Siguiente →</button>
+      </div>
+      <div style="flex:1"></div>
+      <label>Ir a fecha:</label>
+      <input type="date" id="date-picker" onchange="onDatePick()">
+    </div>
+    <div id="cronograma-grid"></div>
+  </div>
+
+  <!-- RESUMEN -->
+  <div class="section" id="sec-resumen">
+    <div class="controls">
+      <label>Desde:</label>
+      <input type="date" id="resumen-desde" onchange="onResumenDateChange()">
+      <label>Hasta:</label>
+      <input type="date" id="resumen-hasta" onchange="onResumenDateChange()">
+      <button class="btn-historico active" id="btn-historico" onclick="setHistorico()">Histórico</button>
+    </div>
+    <div class="resumen-wrapper" style="margin-top:12px;">
+      <table class="resumen-table">
+        <thead>
+          <tr>
+            <th onclick="resumenSort('nombre')">Nombre <span class="sort-icon" id="icon-nombre"></span></th>
+            <th onclick="resumenSort('horas')">Horas Totales <span class="sort-icon" id="icon-horas"></span></th>
+            <th onclick="resumenSort('fs')">FS <span class="sort-icon" id="icon-fs"></span></th>
+            <th onclick="resumenSort('fsl3')">FSL3 <span class="sort-icon" id="icon-fsl3"></span></th>
+            <th onclick="resumenSort('fsl4')">FSL4 <span class="sort-icon" id="icon-fsl4"></span></th>
+            <th onclick="resumenSort('pct')">Distribución <span class="sort-icon" id="icon-pct"></span></th>
+          </tr>
+        </thead>
+        <tbody id="resumen-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- FINDES LARGOS -->
+  <div class="section" id="sec-findes">
+    <div class="bloques-grid" id="bloques-container"></div>
+  </div>
+  
+  <!-- LAR -->
+  <div class="section" id="sec-lar">
+    <div class="timeline-container" id="lar-timeline"></div>
+  </div>
+
+  <!-- LPP -->
+  <div class="section" id="sec-lpp">
+    <div class="timeline-container" id="lpp-timeline"></div>
+  </div>
+
+  <!-- PERSONAL -->
+  <div class="section" id="sec-personal">
+    <div id="personal-container"></div>
+  </div>
+</div>
+
+<script>
+const GUARDIAS = __GUARDIAS_DATA__;
+const PERSONAL = __PERSONAL_DATA__;
+const BLOQUES  = __BLOQUES_DATA__;
+const LAR_DATA = __LAR_DATA__;
+const LPP_DATA = __LPP_DATA__;
+const MIN_FECHA = '__MIN_FECHA__';
+const MAX_FECHA = '__MAX_FECHA__';
+
+const TURNO_ORDER = [
+  'Mañana_UTI','Mañana_UCO','Mañana_especial',
+  'Tarde_UTI','Tarde_UCO','Tarde_especial',
+  'Dia_UTI','Dia_UCO','Noche'
+];
+const TURNO_CLASS = {
+  'Mañana_UTI':'row-manana-uti','Mañana_UCO':'row-manana-uco','Mañana_especial':'row-manana-especial',
+  'Tarde_UTI':'row-tarde-uti','Tarde_UCO':'row-tarde-uco','Tarde_especial':'row-tarde-especial',
+  'Dia_UTI':'row-dia-uti','Dia_UCO':'row-dia-uco','Noche':'row-noche'
+};
+const DAY_NAMES = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+
+let allWeeks = [];
+let currentWeekIndex = 0;
+let selectedPerson = '';
+
+let resumenSortCol = 'horas';
+let resumenSortDir = 'desc';
+
+// ── Helpers ──
+function toDate(s) { return new Date(s + 'T00:00:00'); }
+function fmtDMY(s) {
+  const d = toDate(s);
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yy = String(d.getFullYear()).slice(2);
+  return dd+'/'+mm+'/'+yy;
+}
+function mondayOf(dateStr) {
+  const d = toDate(dateStr);
+  const day = d.getDay(); // 0=Sun
+  const diff = day === 0 ? -6 : 1 - day;
+  const m = new Date(d); m.setDate(m.getDate() + diff);
+  return m.toISOString().slice(0,10);
+}
+function addDays(dateStr, n) {
+  const d = toDate(dateStr); d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+
+// ── Init ──
+function initApp() {
+  // Build all weeks
+  const mondays = new Set();
+  GUARDIAS.forEach(g => mondays.add(mondayOf(g.fecha)));
+  allWeeks = [...mondays].sort();
+
+  // Default to last week
+  currentWeekIndex = Math.max(0, allWeeks.length - 1);
+
+  // Populate person filter
+  const sel = document.getElementById('filter-persona');
+  PERSONAL.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.nombre; o.textContent = p.nombre;
+    sel.appendChild(o);
+  });
+
+  // Set resumen dates
+  document.getElementById('resumen-desde').value = MIN_FECHA;
+  document.getElementById('resumen-hasta').value = MAX_FECHA;
+
+  renderCronograma();
+  renderResumen();
+  renderBloques();
+  renderTimeline('lar', LAR_DATA);
+  renderTimeline('lpp', LPP_DATA);
+  renderPersonal();
+
+  window.addEventListener('resize', () => {
+    if (document.getElementById('sec-lar').classList.contains('active')) syncMinimap('lar');
+    if (document.getElementById('sec-lpp').classList.contains('active')) syncMinimap('lpp');
+  });
+}
+
+function renderTimeline(type, data) {
+  const container = document.getElementById(type + '-timeline');
+  if (data.length === 0) {
+    container.innerHTML = '<p class="empty-msg" style="padding:40px;text-align:center">No hay registros de licencias.</p>';
+    return;
+  }
+
+  // 1. Encontrar rango de fechas
+  let minD = toDate(data[0].fechaInicio), maxD = toDate(data[0].fechaFin);
+  data.forEach(l => {
+    const d1 = toDate(l.fechaInicio), d2 = toDate(l.fechaFin);
+    if (d1 < minD) minD = d1;
+    if (d2 > maxD) maxD = d2;
+  });
+
+  // Ajustar al inicio del primer mes
+  minD = new Date(minD.getFullYear(), minD.getMonth(), 1);
+  // Extender hasta el final del mes siguiente a la última licencia (= 1 mes de margen)
+  const lastDayLicense = new Date(maxD);
+  maxD = new Date(lastDayLicense.getFullYear(), lastDayLicense.getMonth() + 2, 0);
+
+  const totalDays = Math.ceil((maxD - minD) / (24 * 60 * 60 * 1000)) + 1;
+  const dayWidth = 15; // px por día
+  const totalWidth = totalDays * dayWidth;
+
+  // 2. Generar Header de Meses
+  const monthNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  let htmlHeader = '<div class="timeline-header" style="width:'+totalWidth+'px">';
+  let curr = new Date(minD);
+  
+  while (curr <= maxD) {
+    const m = curr.getMonth();
+    const y = curr.getFullYear();
+    const nextM = new Date(y, m + 1, 1);
+    
+    const startOfThisMonth = curr;
+    const endOfThisMonth = nextM <= maxD ? nextM : new Date(maxD.getTime() + 86400000);
+    const daysInMonth = (endOfThisMonth - startOfThisMonth) / (24 * 60 * 60 * 1000);
+    
+    if (daysInMonth > 0) {
+      htmlHeader += `<div class="timeline-month" style="width:${daysInMonth * dayWidth}px">${monthNames[m]} ${y}</div>`;
+    }
+    curr = nextM;
+  }
+  htmlHeader += '</div>';
+
+  // 3. Generar Filas
+  const porPersona = {};
+  data.forEach(l => {
+    if (!porPersona[l.nombre]) porPersona[l.nombre] = [];
+    porPersona[l.nombre].push(l);
+  });
+
+  let htmlRows = '<div class="timeline-rows" style="width:'+totalWidth+'px">';
+  
+  // Líneas de fondo (grid)
+  for(let i=0; i<totalDays; i+=7) {
+    htmlRows += `<div class="timeline-grid-line" style="left:${i * dayWidth}px"></div>`;
+  }
+
+  // Línea de Hoy (Main Timeline)
+  const today = new Date();
+  if (today >= minD && today <= maxD) {
+    const todayLeft = ((today - minD) / (24 * 60 * 60 * 1000)) * dayWidth;
+    htmlRows += `<div class="today-line" style="left:${todayLeft}px"><div class="today-label">HOY</div></div>`;
+  }
+
+  Object.entries(porPersona).forEach(([nombre, licencias]) => {
+    htmlRows += '<div class="timeline-row">';
+    licencias.forEach(l => {
+      const start = toDate(l.fechaInicio), end = toDate(l.fechaFin);
+      const left = ((start - minD) / (24 * 60 * 60 * 1000)) * dayWidth;
+      const width = ((end - start) / (24 * 60 * 60 * 1000) + 1) * dayWidth;
+      const cls = type === 'lar' ? 'bar-lar' : 'bar-lpp';
+      const label = `${nombre.replace('Lic. ','')} (${fmtDMY(l.fechaInicio).slice(0,5)})`;
+      
+      htmlRows += `<div class="timeline-bar ${cls}" style="left:${left}px; width:${width}px" title="${nombre}: ${fmtDMY(l.fechaInicio)} al ${fmtDMY(l.fechaFin)}">${label}</div>`;
+    });
+    htmlRows += '</div>';
+  });
+  htmlRows += '</div>';
+
+  const mainHtml = `<div class="timeline-main" id="${type}-main-scroll" onscroll="syncMinimap('${type}')">
+    <div class="timeline-inner" style="width:${totalWidth}px">
+      ${htmlHeader}
+      ${htmlRows}
+    </div>
+  </div>`;
+
+  // 4. Construir Minimapa
+  const currentYear = today.getFullYear();
+  const yearStart = new Date(currentYear, 0, 1);
+  const yearEnd = new Date(currentYear, 11, 31);
+  
+  const mapStartMs = Math.min(yearStart.getTime(), minD.getTime());
+  const mapEndMs = Math.max(yearEnd.getTime(), maxD.getTime());
+  const mapDuration = mapEndMs - mapStartMs;
+
+  let minimapRows = '';
+  const numPersons = Object.keys(porPersona).length;
+  Object.entries(porPersona).forEach(([nombre, licencias], idx) => {
+    const topPct = numPersons > 1 ? (idx / (numPersons - 1)) * 70 + 10 : 50; 
+    licencias.forEach(l => {
+      const start = toDate(l.fechaInicio).getTime();
+      const end = toDate(l.fechaFin).getTime();
+      
+      const mapStart = Math.max(start, mapStartMs);
+      const mapEnd = Math.min(end, mapEndMs);
+      if (mapStart > mapEnd) return; 
+      
+      const leftPct = ((mapStart - mapStartMs) / mapDuration) * 100;
+      const widthPct = ((mapEnd - mapStart) / mapDuration) * 100;
+      const cls = type === 'lar' ? 'bar-lar' : 'bar-lpp';
+      minimapRows += `<div class="minimap-bar ${cls}" style="left:${leftPct}%; width:${widthPct}%; top:${topPct}%;"></div>`;
+    });
+  });
+
+  let minimapMonths = '';
+  let mCurr = new Date(mapStartMs);
+  mCurr.setDate(1); 
+  while (mCurr <= new Date(mapEndMs)) {
+    const leftPct = ((mCurr.getTime() - mapStartMs) / mapDuration) * 100;
+    if (leftPct >= 0 && leftPct <= 100) {
+      minimapMonths += `<div class="minimap-month-line" style="left:${leftPct}%;"></div>`;
+      minimapMonths += `<div class="minimap-month-label" style="left:${leftPct}%;">${monthNames[mCurr.getMonth()]}</div>`;
+    }
+    mCurr.setMonth(mCurr.getMonth() + 1);
+  }
+
+  let minimapTodayHtml = '';
+  if (today.getTime() >= mapStartMs && today.getTime() <= mapEndMs) {
+    const todayPct = ((today.getTime() - mapStartMs) / mapDuration) * 100;
+    minimapTodayHtml = `<div class="minimap-today" style="left:${todayPct}%"></div>`;
+  }
+
+  const minimapHtml = `<div class="timeline-minimap-container" id="${type}-minimap">
+    ${minimapMonths}
+    ${minimapRows}
+    ${minimapTodayHtml}
+    <div class="minimap-viewport" id="${type}-viewport"></div>
+  </div>`;
+
+  container.innerHTML = mainHtml + minimapHtml;
+  container.dataset.minD = minD.getTime();
+  container.dataset.dayWidth = dayWidth;
+  container.dataset.mapStart = mapStartMs;
+  container.dataset.mapDuration = mapDuration;
+  container.dataset.mapDuration = mapDuration;
+  container.dataset.maxD = maxD.getTime();
+  
+  setupMinimapDrag(type);
+  syncMinimap(type); 
+}
+
+function syncMinimap(type) {
+  const scrollEl = document.getElementById(`${type}-main-scroll`);
+  const viewportEl = document.getElementById(`${type}-viewport`);
+  const container = document.getElementById(type + '-timeline');
+  
+  if (!scrollEl || !viewportEl || !container) return;
+  
+  const minD = parseInt(container.dataset.minD);
+  const dayWidth = parseInt(container.dataset.dayWidth);
+  const mapStartMs = parseInt(container.dataset.mapStart);
+  const mapDuration = parseInt(container.dataset.mapDuration);
+  
+  const viewLeftPx = scrollEl.scrollLeft;
+  const viewWidthPx = scrollEl.clientWidth;
+  
+  const viewStartMs = minD + (viewLeftPx / dayWidth) * 24 * 60 * 60 * 1000;
+  const viewEndMs = viewStartMs + (viewWidthPx / dayWidth) * 24 * 60 * 60 * 1000;
+  
+  let pctLeft = ((viewStartMs - mapStartMs) / mapDuration) * 100;
+  let pctWidth = ((viewEndMs - viewStartMs) / mapDuration) * 100;
+  
+  if (pctLeft < 0) { pctWidth += pctLeft; pctLeft = 0; }
+  if (pctLeft + pctWidth > 100) { pctWidth = 100 - pctLeft; }
+  pctWidth = Math.max(0, pctWidth);
+  
+  viewportEl.style.left = pctLeft + '%';
+  viewportEl.style.width = pctWidth + '%';
+}
+
+function setupMinimapDrag(type) {
+  const minimap = document.getElementById(`${type}-minimap`);
+  let isDragging = false;
+  
+  minimap.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      updateScrollFromMinimap(e, type);
+  });
+  
+  window.addEventListener('mousemove', (e) => {
+      if (isDragging) updateScrollFromMinimap(e, type);
+  });
+  
+  window.addEventListener('mouseup', () => {
+      isDragging = false;
+  });
+  
+  minimap.addEventListener('mouseleave', () => {
+      isDragging = false;
+  });
+}
+
+function updateScrollFromMinimap(e, type) {
+    const minimap = document.getElementById(`${type}-minimap`);
+    const scrollEl = document.getElementById(`${type}-main-scroll`);
+    const container = document.getElementById(type + '-timeline');
+    if (!minimap || !scrollEl || !container) return;
+
+    const rect = minimap.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const pct = x / rect.width;
+
+    const mapStartMs = parseInt(container.dataset.mapStart);
+    const mapDuration = parseInt(container.dataset.mapDuration);
+    const minD = parseInt(container.dataset.minD);
+    const dayWidth = parseInt(container.dataset.dayWidth);
+
+    const targetTimeMs = mapStartMs + pct * mapDuration;
+    const targetPx = ((targetTimeMs - minD) / (24 * 60 * 60 * 1000)) * dayWidth;
+    
+    scrollEl.scrollLeft = targetPx - (scrollEl.clientWidth / 2);
+}
+
+// ── Navigation ──
+let centeredOnce = { lar: false, lpp: false };
+
+function showSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('sec-'+name).classList.add('active');
+  if (event && event.target) {
+    event.target.classList.add('active');
+  } else {
+    const btn = document.querySelector(`.nav-btn[onclick="showSection('${name}')"]`);
+    if(btn) btn.classList.add('active');
+  }
+
+  if ((name === 'lar' || name === 'lpp') && !centeredOnce[name]) {
+      setTimeout(() => { 
+          centerToday(name); 
+          centeredOnce[name] = true; 
+      }, 10);
+  }
+}
+
+function centerToday(type) {
+    const scrollEl = document.getElementById(`${type}-main-scroll`);
+    const container = document.getElementById(type + '-timeline');
+    if (!scrollEl || !container) return;
+    
+    const minD = parseInt(container.dataset.minD);
+    const maxD = parseInt(container.dataset.maxD);
+    const dayWidth = parseInt(container.dataset.dayWidth);
+    
+    const today = new Date().getTime();
+    if (today >= minD && today <= maxD) {
+        const todayLeft = ((today - minD) / (24 * 60 * 60 * 1000)) * dayWidth;
+        scrollEl.scrollLeft = todayLeft - (scrollEl.clientWidth / 2);
+    } else {
+        scrollEl.scrollLeft = scrollEl.scrollWidth;
+    }
+    syncMinimap(type);
+}
+function prevWeek() { if(currentWeekIndex>0){currentWeekIndex--;renderCronograma();} }
+function nextWeek() { if(currentWeekIndex<allWeeks.length-1){currentWeekIndex++;renderCronograma();} }
+function onDatePick() {
+  const v = document.getElementById('date-picker').value;
+  if(!v) return;
+  const m = mondayOf(v);
+  const idx = allWeeks.indexOf(m);
+  if(idx >= 0) { currentWeekIndex = idx; }
+  else {
+    // Find closest week
+    let best = 0;
+    allWeeks.forEach((w,i) => { if(w <= m) best = i; });
+    currentWeekIndex = best;
+  }
+  renderCronograma();
+}
+function onPersonFilter() {
+  selectedPerson = document.getElementById('filter-persona').value;
+  renderCronograma();
+}
+
+// ── Render Cronograma ──
+function renderCronograma() {
+  if(allWeeks.length === 0) {
+    document.getElementById('cronograma-grid').innerHTML = '<p class="empty-msg">No hay guardias registradas.</p>';
+    return;
+  }
+  const monday = allWeeks[currentWeekIndex];
+  const days = [];
+  for(let i=0;i<7;i++) days.push(addDays(monday, i));
+
+  // Filter guardias
+  const daySet = new Set(days);
+  let wg = GUARDIAS.filter(g => daySet.has(g.fecha));
+  if(selectedPerson) wg = wg.filter(g => g.nombre === selectedPerson);
+
+  // Build grid
+  const grid = {};
+  wg.forEach(g => {
+    const k = g.fecha+'|'+g.turno;
+    if(!grid[k]) grid[k] = [];
+    grid[k].push(g.nombre);
+  });
+
+  // Active turnos
+  const activeTurnos = TURNO_ORDER.filter(t => days.some(d => (grid[d+'|'+t]||[]).length > 0));
+
+  let html = '<div class="table-wrapper"><table class="cronograma-table"><thead><tr><th class="turno-col">Turno</th>';
+  days.forEach((d,i) => {
+    const dt = toDate(d);
+    const isFinde = i >= 5;
+    const cls = isFinde ? ' class="finde-header"' : '';
+    html += '<th'+cls+'><div class="fecha-header"><span class="dia-nombre">'+DAY_NAMES[i]+'</span><span class="fecha-num">'+dt.getDate()+'/'+(dt.getMonth()+1)+'</span></div></th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  activeTurnos.forEach(t => {
+    const cls = TURNO_CLASS[t] || '';
+    
+    // Calcular cuántos slots (filas) necesitamos para este turno en esta semana
+    let maxSlots = 0;
+    days.forEach(d => {
+      const count = (grid[d+'|'+t] || []).length;
+      if (count > maxSlots) maxSlots = count;
+    });
+    
+    for (let slot = 0; slot < maxSlots; slot++) {
+      html += '<tr class="'+cls+'">';
+      // Mostramos el nombre del turno solo en la primera fila del grupo para no saturar
+      html += '<td class="turno-label">'+(slot === 0 ? t : '')+'</td>';
+      
+      days.forEach((d,i) => {
+        const nombres = grid[d+'|'+t] || [];
+        const nombre = nombres[slot] || '';
+        const isFinde = i >= 5;
+        const cellCls = isFinde ? ' finde-cell' : '';
+        const content = nombre.replace('Lic. ','');
+        html += '<td class="data-cell'+cellCls+'">'+content+'</td>';
+      });
+      html += '</tr>';
+    }
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('cronograma-grid').innerHTML = html;
+
+  // Update week label
+  const d0 = toDate(days[0]), d6 = toDate(days[6]);
+  document.getElementById('week-label').textContent =
+    d0.getDate()+'/'+(d0.getMonth()+1)+'/'+d0.getFullYear()+' — '+d6.getDate()+'/'+(d6.getMonth()+1)+'/'+d6.getFullYear();
+
+  document.getElementById('btn-prev').disabled = currentWeekIndex === 0;
+  document.getElementById('btn-next').disabled = currentWeekIndex === allWeeks.length - 1;
+}
+
+// ── Render Resumen ──
+function onResumenDateChange() {
+  document.getElementById('btn-historico').classList.remove('active');
+  renderResumen();
+}
+function setHistorico() {
+  document.getElementById('resumen-desde').value = MIN_FECHA;
+  document.getElementById('resumen-hasta').value = MAX_FECHA;
+  document.getElementById('btn-historico').classList.add('active');
+  renderResumen();
+}
+
+function resumenSort(col) {
+  if(resumenSortCol === col) {
+    resumenSortDir = resumenSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    resumenSortCol = col;
+    resumenSortDir = 'desc';
+  }
+  renderResumen();
+}
+
+function renderResumen() {
+  const desde = document.getElementById('resumen-desde').value;
+  const hasta = document.getElementById('resumen-hasta').value;
+  if(!desde || !hasta) return;
+
+  const filtered = GUARDIAS.filter(g => g.fecha >= desde && g.fecha <= hasta);
+
+  // Pre-calculate all weekends in range
+  const weekendDates = new Set();
+  let curr = toDate(desde);
+  const dEnd = toDate(hasta);
+  while(curr <= dEnd) {
+    const day = curr.getDay();
+    if(day === 0 || day === 6) {
+      const dStr = curr.toISOString().slice(0,10);
+      const satStr = day === 0 ? addDays(dStr, -1) : dStr;
+      weekendDates.add(satStr);
+    }
+    curr.setDate(curr.getDate() + 1);
+  }
+
+  const stats = {};
+  PERSONAL.forEach(p => {
+    stats[p.nombre] = { horas:0, fsWeekends: new Set(), fsl3:0, fsl4:0, activeWeeks: new Set() };
+  });
+
+  // Aggregate
+  filtered.forEach(g => {
+    if(!stats[g.nombre]) return;
+    stats[g.nombre].horas += g.horas;
+    // Track active ISO weeks
+    const mon = mondayOf(g.fecha);
+    stats[g.nombre].activeWeeks.add(mon);
+    // FS: distinct weekends (Sat or Sun)
+    const d = toDate(g.fecha);
+    const day = d.getDay();
+    if(day === 0 || day === 6) {
+      const satStr = day === 0 ? addDays(g.fecha, -1) : g.fecha;
+      stats[g.nombre].fsWeekends.add(satStr);
+    }
+  });
+
+  // FSL3 / FSL4 - Count WORKED instead of libres
+  BLOQUES.forEach(b => {
+    if(b.fechaInicio > hasta || b.fechaFin < desde) return;
+    PERSONAL.forEach(p => {
+      if(!stats[p.nombre]) return;
+      const worked = filtered.some(g =>
+        g.nombre === p.nombre && g.fecha >= b.fechaInicio && g.fecha <= b.fechaFin && g.esFinde
+      );
+      if(worked) {
+        if(b.tipo === 3) stats[p.nombre].fsl3++;
+        else if(b.tipo >= 4) stats[p.nombre].fsl4++;
+      }
+    });
+  });
+
+  // Helper for progress bar
+  const renderBar = (current, total, suffix = '') => {
+    const pct = total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0;
+    return `
+      <div class="bar-container"><div class="bar" style="width:${pct}%"></div></div>
+      <div class="bar-text">${current} / ${total}${suffix} (${pct}%)</div>
+    `;
+  };
+
+  // Build rows
+  const rows = PERSONAL.map(p => {
+    const s = stats[p.nombre];
+    const semanasHabiles = Math.max(1, s.activeWeeks.size);
+    const maxHoras = semanasHabiles * 36;
+    const pct = Math.min(100, Math.round(s.horas / maxHoras * 100));
+
+    // Calculate personal available events
+    let fsMax = 0;
+    weekendDates.forEach(sat => {
+      if (s.activeWeeks.has(mondayOf(sat))) fsMax++;
+    });
+    fsMax = Math.max(fsMax, s.fsWeekends.size);
+
+    let fsl3Max = 0, fsl4Max = 0;
+    BLOQUES.forEach(b => {
+      if(b.fechaInicio > hasta || b.fechaFin < desde) return;
+      if (s.activeWeeks.has(mondayOf(b.fechaInicio))) {
+        if (b.tipo === 3) fsl3Max++;
+        else if (b.tipo >= 4) fsl4Max++;
+      }
+    });
+    fsl3Max = Math.max(fsl3Max, s.fsl3);
+    fsl4Max = Math.max(fsl4Max, s.fsl4);
+
+    return { 
+      nombre: p.nombre, 
+      horas: s.horas, 
+      fs: s.fsWeekends.size, fsMax,
+      fsl3: s.fsl3, fsl3Max,
+      fsl4: s.fsl4, fsl4Max,
+      pct, maxHoras 
+    };
+  });
+
+  // Sort
+  rows.sort((a, b) => {
+    let vA = a[resumenSortCol];
+    let vB = b[resumenSortCol];
+    if (typeof vA === 'string') { vA = vA.toLowerCase(); vB = vB.toLowerCase(); }
+    if (vA < vB) return resumenSortDir === 'asc' ? -1 : 1;
+    if (vA > vB) return resumenSortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  // Update Icons
+  document.querySelectorAll('.sort-icon').forEach(s => s.textContent = '');
+  const icon = resumenSortDir === 'asc' ? ' ▲' : ' ▼';
+  const iconEl = document.getElementById('icon-' + resumenSortCol);
+  if(iconEl) iconEl.textContent = icon;
+
+  let html = '';
+  rows.forEach(r => {
+    html += '<tr>' +
+      '<td class="nombre-cell">'+r.nombre+'</td>' +
+      '<td class="numero">'+r.horas+'</td>' +
+      '<td>'+renderBar(r.fs, r.fsMax)+'</td>' +
+      '<td>'+renderBar(r.fsl3, r.fsl3Max)+'</td>' +
+      '<td>'+renderBar(r.fsl4, r.fsl4Max)+'</td>' +
+      '<td>'+renderBar(r.horas, r.maxHoras, ' hs')+'</td>' +
+      '</tr>';
+  });
+  document.getElementById('resumen-body').innerHTML = html;
+}
+
+// ── Render Bloques ──
+function renderBloques() {
+  const container = document.getElementById('bloques-container');
+  if(BLOQUES.length === 0) {
+    container.innerHTML = '<p class="empty-msg">No hay bloques registrados.</p>';
+    return;
+  }
+  
+  let html = '';
+  BLOQUES.forEach(b => {
+    // Buscar personal que trabajó en este bloque
+    const personasSet = new Set();
+    GUARDIAS.forEach(g => {
+      if (g.fecha >= b.fechaInicio && g.fecha <= b.fechaFin && g.esFinde) {
+        personasSet.add(g.nombre.replace('Lic. ', ''));
+      }
+    });
+    const personas = [...personasSet].sort();
+
+    html += `
+      <div class="bloque-card tipo-${b.tipo}">
+        <div class="bloque-header">
+          <span class="bloque-fechas">${fmtDMY(b.fechaInicio)} a ${fmtDMY(b.fechaFin)}</span>
+          <span class="bloque-tipo">${b.tipo} días</span>
+        </div>
+        <div class="bloque-personal">
+          ${personas.length > 0 
+            ? personas.map(p => `<span class="badge-persona">${p}</span>`).join('') 
+            : '<span class="empty-msg" style="padding:0">Sin guardias asignadas</span>'}
+        </div>
+      </div>`;
+  });
+  container.innerHTML = html;
+}
+
+function renderPersonal() {
+  const jefes = PERSONAL.filter(p => p.rol === 'Jefe');
+  const coords = PERSONAL.filter(p => p.rol === 'Coordinador');
+  const rotativos = PERSONAL.filter(p => p.rol !== 'Jefe' && p.rol !== 'Coordinador');
+  
+  function renderGroup(title, members) {
+    if (members.length === 0) return '';
+    let h = '<h3 class="group-title">' + title + '</h3>';
+    h += '<div class="personas-grid" style="gap:8px;">';
+    members.forEach(p => {
+      const cls = p.rol.toLowerCase();
+      h += '<div class="persona-card '+cls+'">' +
+        '<span class="persona-nombre">'+p.nombre+'</span>' +
+        '<span class="persona-rol">'+p.rol+'</span></div>';
+    });
+    h += '</div>';
+    return h;
+  }
+
+  let html = '<div class="personal-top-row">';
+  html += '<div class="personal-col">' + renderGroup('Jefatura', jefes) + '</div>';
+  html += '<div class="personal-col">' + renderGroup('Coordinacion', coords) + '</div>';
+  html += '</div>';
+  html += renderGroup('Rotativos', rotativos);
+  
+  document.getElementById('personal-container').innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>
