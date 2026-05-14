@@ -1,285 +1,133 @@
 from datetime import date, timedelta
-from data import FECHA_INICIO, FECHA_FIN, DEBUG_LOGS, DEBUG_DISABLE_SEGUIMIENTO, DEBUG_DISABLE_DESCANSO_NOCHE, DEBUG_DISABLE_MAX_HORAS, DIA_DEL_PADRE, DIA_DE_LA_MADRE
-import db as _db
+from typing import List, Dict, Any, Set
+import math
 import rule_engine as _re
+from models import Empleado, Turno
+from utils import time_to_float
+from data import FECHA_INICIO, FECHA_FIN, DEBUG_LOGS, DEBUG_DISABLE_MAX_HORAS
 
-
-def _get_licencias(): return _db.LAR, _db.LPP
-
-def aplicar_reglas_duras(modelo, turnos, df_personal, demanda_turnos, metadata_turnos, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, historial_semana_previa=None, flr_tracker=None, servicio_id=1):
-    # Cargar el motor de reglas desde la BD
-    reglas_servicio = _db.cargar_reglas_servicio(servicio_id)
-    reglas_personal = _db.cargar_reglas_personal(servicio_id)
-    ajustes_reglas_personal = _db.cargar_ajustes_reglas_personal(FECHA_INICIO, FECHA_FIN)
-    
-    # Validar regla obligatoria MAX_HORAS_SEMANA
-    if 'MAX_HORAS_SEMANA' not in reglas_servicio:
-        raise ValueError("❌ ERROR CRÍTICO: La regla 'MAX_HORAS_SEMANA' no está configurada en la base de datos para este servicio.")
-    
-    limite_horas_global = reglas_servicio['MAX_HORAS_SEMANA'].get('limite')
-    if limite_horas_global is None:
-        raise ValueError("❌ ERROR CRÍTICO: El parámetro 'limite' de la regla 'MAX_HORAS_SEMANA' no está definido en el JSON de la base de datos.")
-
-    if 'DESC_POST_NOCHE' not in reglas_servicio:
-        raise ValueError("❌ ERROR CRÍTICO: La regla 'DESC_POST_NOCHE' no está configurada en la base de datos para este servicio.")
-    
-
-    # Semanas de referencia base (originalmente el sistema fue calibrado para 4 semanas)
-    SEMANAS_BASE = 4
-    # 0. LAR / LPP: bloquear todos los turnos en días de licencia
-    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
-
-    def get_dias_bloqueados(nombre):
-        """Set de índices de día (0-based) en que la persona está de LAR, LPP o día libre obligatorio."""
-        bloqueados = set()
-        for licencias in _get_licencias():
-            for (ini_str, fin_str) in licencias.get(nombre, []):
-                ini = date.fromisoformat(ini_str)
-                fin = date.fromisoformat(fin_str)
-                for d in range(dias_del_bloque):
-                    if ini <= fecha_inicio_dt + timedelta(days=d) <= fin:
-                        bloqueados.add(d)
-                        
-        # Regla CUMPLEANOS_LIBRE
-        params_cumple = _re.resolver_parametros_regla(
-            'CUMPLEANOS_LIBRE', nombre, FECHA_INICIO,
-            reglas_servicio, reglas_personal, ajustes_reglas_personal
-        )
-        if _re.regla_existe(params_cumple):
-            persona_row = df_personal[df_personal['Nombre'] == nombre].iloc[0]
-            cumple = persona_row.get('fecha_cumpleanos')
-            if cumple and isinstance(cumple, str) and len(cumple) >= 5:
-                try:
-                    parts = cumple.split('-')
-                    if len(parts) >= 3:
-                        m, d_c = int(parts[1]), int(parts[2])
-                        for d in range(dias_del_bloque):
-                            dia_actual = fecha_inicio_dt + timedelta(days=d)
-                            if dia_actual.month == m and dia_actual.day == d_c:
-                                bloqueados.add(d)
-                except ValueError:
-                    pass
-
-        # Regla DIA_MADRE_PADRE_LIBRE
-        params_especial = _re.resolver_parametros_regla(
-            'DIA_MADRE_PADRE_LIBRE', nombre, FECHA_INICIO,
-            reglas_servicio, reglas_personal, ajustes_reglas_personal
-        )
-        if _re.regla_existe(params_especial):
-            persona_row = df_personal[df_personal['Nombre'] == nombre].iloc[0]
-            es_madre = persona_row.get('es_madre', 0) == 1
-            es_padre = persona_row.get('es_padre', 0) == 1
-            
-            fechas_especiales = []
-            if es_madre and DIA_DE_LA_MADRE:
-                fechas_especiales.append(date.fromisoformat(DIA_DE_LA_MADRE))
-            if es_padre and DIA_DEL_PADRE:
-                fechas_especiales.append(date.fromisoformat(DIA_DEL_PADRE))
-                
-            for fe in fechas_especiales:
-                for d in range(dias_del_bloque):
-                    if fecha_inicio_dt + timedelta(days=d) == fe:
-                        bloqueados.add(d)
-
-        return bloqueados
-
-    licencias_semanales = {}
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
-        bloqueados = get_dias_bloqueados(nombre)
-        for d in bloqueados:
-            tipos_dia = ["Semana", "Finde_Feriado"]
-            for td in tipos_dia:
-                for t in demanda_turnos.get(td, {}).keys():
-                    if (nombre, d, t) in turnos:
-                        modelo.Add(turnos[(nombre, d, t)] == 0)
-        
-        if DEBUG_LOGS and bloqueados:
-            for d in bloqueados:
-                sem = d // 7
-                licencias_semanales.setdefault(sem, set()).add(nombre)
-
-    if DEBUG_LOGS:
-        print("\n--- DIAGNÓSTICO DE LICENCIAS ---")
-        for sem, nombres in sorted(licencias_semanales.items()):
-            print(f"Semana {sem}: {len(nombres)} personas de licencia ({', '.join(nombres)})")
-
-    # Agrupar días del bloque por semana calendario ISO
-    semanas_calendario = {}
+def _get_semanas_calendario(dias_del_bloque: int, fecha_inicio_dt: date) -> Dict[tuple, List[tuple]]:
+    semanas = {}
     for d in range(dias_del_bloque):
         fecha_d = fecha_inicio_dt + timedelta(days=d)
         iso_year, iso_week, iso_weekday = fecha_d.isocalendar()
-        semanas_calendario.setdefault((iso_year, iso_week), []).append((d, fecha_d))
+        semanas.setdefault((iso_year, iso_week), []).append((d, fecha_d))
+    return semanas
 
-    # 1. MAX_TURNOS: límite de un tipo de turno específico por bloque semanal
-    # NO_NOCHES queda cubierto por EXCLUIR_TURNOS en personal_reglas.
-    # Formato en DB: [{"turno": "Noche", "max_por_semana": 2}]
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
-        historial_persona = historial_semana_previa.get(nombre, []) if historial_semana_previa else []
-        
+def _is_finde(d: int, offset_dia: int, feriados: List[int]) -> bool:
+    return ((d + offset_dia) % 7) >= 5 or d in feriados
+
+def aplicar_reglas_duras(
+    modelo,
+    turnos_vars,
+    empleados: List[Empleado],
+    demanda_turnos: Dict,
+    turnos_dict: Dict[str, Turno],
+    demanda_req: Dict,
+    ajustes_demanda: Dict,
+    dias_del_bloque: int,
+    feriados: List[int],
+    offset_dia: int,
+    num_semanas: int,
+    historial_semana_previa: Dict[str, List[Dict]],
+    reglas_servicio: Dict[str, Any],
+    ajustes_reglas_personal: Dict[str, Any],
+    servicio_id: int
+):
+    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    semanas_calendario = _get_semanas_calendario(dias_del_bloque, fecha_inicio_dt)
+
+    if 'MAX_HORAS_SEMANA' not in reglas_servicio:
+        raise ValueError("❌ ERROR CRÍTICO: La regla 'MAX_HORAS_SEMANA' no está configurada en la BD.")
+    limite_horas_global = reglas_servicio['MAX_HORAS_SEMANA'].get('limite', 48)
+
+    _aplicar_licencias(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados)
+    _aplicar_max_turnos(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
+    _aplicar_excluir_turnos(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal)
+    _aplicar_min_turnos(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
+    _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial_semana_previa)
+    _aplicar_limite_horas_semanales(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, demanda_turnos, turnos_dict, offset_dia, feriados, limite_horas_global)
+    _aplicar_descanso_entre_turnos(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal, offset_dia, feriados, demanda_turnos, turnos_dict)
+    _aplicar_un_solo_turno_por_dia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
+    _aplicar_max_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+    _aplicar_fin_licencia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos)
+    _aplicar_min_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+
+def _aplicar_licencias(modelo, turnos_vars, empleados: List[Empleado], demanda_turnos, offset_dia, feriados):
+    for emp in empleados:
+        for d in emp.dias_licencia:
+            for td in ["Semana", "Finde_Feriado"]:
+                for t in demanda_turnos.get(td, {}).keys():
+                    if (emp.nombre, d, t) in turnos_vars:
+                        modelo.Add(turnos_vars[(emp.nombre, d, t)] == 0)
+
+def _aplicar_max_turnos(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas, historial):
+    for emp in empleados:
+        hist_emp = historial.get(emp.nombre, []) if historial else []
         for (iso_year, iso_week), days in semanas_calendario.items():
             first_day_of_week = days[0][1]
             fecha_lunes = (first_day_of_week - timedelta(days=first_day_of_week.isocalendar()[2] - 1)).isoformat()
             
-            params = _re.resolver_parametros_regla(
-                'MAX_TURNOS', nombre, fecha_lunes,
-                reglas_servicio, reglas_personal, ajustes_reglas_personal
-            )
+            params = _re.resolver_parametros_regla('MAX_TURNOS', emp.nombre, fecha_lunes, reglas_servicio, emp.reglas, ajustes_reglas)
             if not _re.regla_existe(params) or not isinstance(params, list):
                 continue
 
-            turnos_previos_en_semana = [h for h in historial_persona if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_year, iso_week)]
+            prev_en_sem = [h for h in hist_emp if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_year, iso_week)]
+            for rest in params:
+                t_tipo = rest.get('turno')
+                max_sem = rest.get('max_por_semana', 99)
+                if not t_tipo: continue
+                
+                prev_tipo = sum(1 for h in prev_en_sem if h['turno'] == t_tipo)
+                v_tipo = [turnos_vars[(emp.nombre, d, t_tipo)] for d, fd in days if (emp.nombre, d, t_tipo) in turnos_vars]
+                if v_tipo or prev_tipo > 0:
+                    modelo.Add(sum(v_tipo) + prev_tipo <= max_sem)
 
-            for restriccion in params:
-                turno_tipo = restriccion.get('turno')
-                max_sem    = restriccion.get('max_por_semana', 99)
-                if not turno_tipo:
-                    continue
-                    
-                previos_tipo = sum(1 for h in turnos_previos_en_semana if h['turno'] == turno_tipo)
-
-                vars_tipo = [
-                    turnos[(nombre, d, turno_tipo)]
-                    for d, fd in days
-                    if (nombre, d, turno_tipo) in turnos
-                ]
-                if vars_tipo or previos_tipo > 0:
-                    modelo.Add(sum(vars_tipo) + previos_tipo <= max_sem)
-
-    # 1b. EXCLUIR_TURNOS: prohibiciones individuales de turnos
-    # Formato en DB: [{"turnos": ["Noche"], "dias": [0,1,2,3,4,5,6]}]
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
+def _aplicar_excluir_turnos(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, fecha_inicio_dt, reglas_servicio, ajustes_reglas):
+    for emp in empleados:
         for d in range(dias_del_bloque):
             fecha_d = (fecha_inicio_dt + timedelta(days=d)).isoformat()
-            params_d = _re.resolver_parametros_regla(
-                'EXCLUIR_TURNOS', nombre, fecha_d,
-                reglas_servicio, reglas_personal, ajustes_reglas_personal
-            )
-            if not _re.regla_existe(params_d) or not isinstance(params_d, list):
+            params = _re.resolver_parametros_regla('EXCLUIR_TURNOS', emp.nombre, fecha_d, reglas_servicio, emp.reglas, ajustes_reglas)
+            if not _re.regla_existe(params) or not isinstance(params, list):
                 continue
             
             dia_semana = (d + offset_dia) % 7
-            for excl in params_d:
-                turnos_prohibidos = excl.get('turnos', [])
-                dias_prohibidos = excl.get('dias', [0,1,2,3,4,5,6])
-                if dia_semana in dias_prohibidos:
-                    for t_prohibido in turnos_prohibidos:
-                        if (nombre, d, t_prohibido) in turnos:
-                            modelo.Add(turnos[(nombre, d, t_prohibido)] == 0)
+            for excl in params:
+                t_prohibidos = excl.get('turnos', [])
+                d_prohibidos = excl.get('dias', [0,1,2,3,4,5,6])
+                if dia_semana in d_prohibidos:
+                    for tp in t_prohibidos:
+                        if (emp.nombre, d, tp) in turnos_vars:
+                            modelo.Add(turnos_vars[(emp.nombre, d, tp)] == 0)
 
-    # 2. MIN_TURNOS: límite mínimo de un tipo de turno específico por bloque semanal
-    # Formato en DB: [{"turno": "Mañana_UTI", "min_por_semana": 4}]
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
-        historial_persona = historial_semana_previa.get(nombre, []) if historial_semana_previa else []
-
+def _aplicar_min_turnos(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas, historial):
+    for emp in empleados:
+        hist_emp = historial.get(emp.nombre, []) if historial else []
         for (iso_year, iso_week), days in semanas_calendario.items():
             first_day_of_week = days[0][1]
             fecha_lunes = (first_day_of_week - timedelta(days=first_day_of_week.isocalendar()[2] - 1)).isoformat()
 
-            params = _re.resolver_parametros_regla(
-                'MIN_TURNOS', nombre, fecha_lunes,
-                reglas_servicio, reglas_personal, ajustes_reglas_personal
-            )
+            params = _re.resolver_parametros_regla('MIN_TURNOS', emp.nombre, fecha_lunes, reglas_servicio, emp.reglas, ajustes_reglas)
             if not _re.regla_existe(params) or not isinstance(params, list):
-                continue  # suspendida para esta persona/semana o no configurada
+                continue
 
-            turnos_previos_en_semana = [h for h in historial_persona if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_year, iso_week)]
-            bloqueados_persona = get_dias_bloqueados(nombre)
-
-            for restriccion in params:
-                turno_tipo = restriccion.get('turno')
-                min_sem    = restriccion.get('min_por_semana', 0)
-                if not turno_tipo or min_sem <= 0:
-                    continue
-
-                previos_tipo = sum(1 for h in turnos_previos_en_semana if h['turno'] == turno_tipo)
-
-                vars_tipo = [
-                    turnos[(nombre, d, turno_tipo)]
-                    for d, fd in days
-                    if (nombre, d, turno_tipo) in turnos and d not in bloqueados_persona
-                ]
+            prev_en_sem = [h for h in hist_emp if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_year, iso_week)]
+            for rest in params:
+                t_tipo = rest.get('turno')
+                min_sem = rest.get('min_por_semana', 0)
+                if not t_tipo or min_sem <= 0: continue
                 
-                if vars_tipo:
-                    # Relajamos el mínimo si la persona está de licencia y no tiene suficientes días
-                    min_efectivo = min(min_sem, len(vars_tipo) + previos_tipo)
-                    modelo.Add(sum(vars_tipo) + previos_tipo >= min_efectivo)
-
-    def time_to_float(t_str):
-        h, m = map(int, t_str.split(':'))
-        return h + m/60.0
-
-
-
-    # 3. BALANCE DE CARGA HORARIA (DIAGNÓSTICO WFM)
-    if DEBUG_LOGS:
-        print("\n--- BALANCE DE CARGA HORARIA POR SEMANA (WFM) ---")
-        for sem in range(num_semanas):
-            horas_necesarias = 0
-            for d in range(sem * 7, (sem + 1) * 7):
-                es_f = ((d + offset_dia) % 7) >= 5 or d in feriados
-                tipo_dia = "Finde_Feriado" if es_f else "Semana"
-                fecha_actual_iso = (fecha_inicio_dt + timedelta(days=d)).isoformat()
-                dia_semana_actual = (d + offset_dia) % 7
+                prev_tipo = sum(1 for h in prev_en_sem if h['turno'] == t_tipo)
+                v_tipo = [turnos_vars[(emp.nombre, d, t_tipo)] for d, fd in days if (emp.nombre, d, t_tipo) in turnos_vars and d not in emp.dias_licencia]
                 
-                for demanda in demanda_req.get(tipo_dia, []):
-                    cantidad = demanda.get("cantidad_min") or 0
-                    ajuste_encontrado = None
-                    for (fi, ff), cambios in ajustes_demanda.items():
-                        if fi <= fecha_actual_iso <= ff:
-                            for adj in cambios:
-                                if adj["demanda_config_id"] == demanda["id"]:
-                                    ajuste_encontrado = adj
-                                    break
-                    
-                    if ajuste_encontrado:
-                        if ajuste_encontrado["dias_override"]:
-                            dias_validos = [int(x) for x in ajuste_encontrado["dias_override"].split(",")]
-                            if dia_semana_actual not in dias_validos and d not in feriados:
-                                cantidad = 0
-                            else:
-                                cantidad = ajuste_encontrado.get("cantidad_min") or 0
-                        else:
-                            cantidad = ajuste_encontrado.get("cantidad_min") or 0
-                            
-                    if cantidad > 0:
-                        ds = time_to_float(demanda["hora_inicio"])
-                        de = time_to_float(demanda["hora_fin"])
-                        dur = de - ds if de > ds else (de + 24) - ds
-                        horas_necesarias += cantidad * dur
-            
-            capacidad_max = 0
-            ausentes_total = []
-            ausentes_parcial = []
-            for _, p in df_personal.iterrows():
-                nombre = p['Nombre']
-                bloqueados_sem = {d for d in get_dias_bloqueados(nombre) if d // 7 == sem}
-                dias_libres = 7 - len(bloqueados_sem)
-                if dias_libres == 0:
-                    ausentes_total.append(nombre)
-                else:
-                    capacidad_max += limite_horas_global
-                    if dias_libres < 7:
-                        ausentes_parcial.append(f"{nombre}({dias_libres}d)")
+                if v_tipo:
+                    min_efectivo = min(min_sem, len(v_tipo) + prev_tipo)
+                    modelo.Add(sum(v_tipo) + prev_tipo >= min_efectivo)
 
-            print(f"Semana {sem}: Necesarias {horas_necesarias} hs | Capacidad Max ({limite_horas_global}h) {capacidad_max} hs | Margen: {capacidad_max - horas_necesarias} hs")
-            if ausentes_total:
-                print(f"  [AUSENTES COMPLETOS] {', '.join(ausentes_total)}")
-            if ausentes_parcial:
-                print(f"  [AUSENTES PARCIALES] {', '.join(ausentes_parcial)}")
-            if capacidad_max - horas_necesarias < 50:
-                print(f"  [ALERTA] Margen muy bajo en Semana {sem}. Las restricciones de descanso podrian hacerla inviable.")
-
-
-    # 4. COBERTURA DINÁMICA CON VALIDACIÓN WFM
-    if DEBUG_LOGS: print("\n--- VALIDACIÓN DE COBERTURA WFM ---")
+def _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial):
     for dia in range(dias_del_bloque):
-        es_f = ((dia + offset_dia) % 7) >= 5 or dia in feriados
+        es_f = _is_finde(dia, offset_dia, feriados)
         tipo_dia = "Finde_Feriado" if es_f else "Semana"
-        fecha_str = (fecha_inicio_dt + timedelta(days=dia)).strftime("%d/%m")
         fecha_actual_iso = (fecha_inicio_dt + timedelta(days=dia)).isoformat()
         dia_semana_actual = (dia + offset_dia) % 7
         
@@ -298,10 +146,8 @@ def aplicar_reglas_duras(modelo, turnos, df_personal, demanda_turnos, metadata_t
             if ajuste_encontrado:
                 if ajuste_encontrado["dias_override"]:
                     dias_validos = [int(x) for x in ajuste_encontrado["dias_override"].split(",")]
-                    # Si es feriado, en la nueva arquitectura siempre aplica para Finde_Feriado
                     if dia_semana_actual not in dias_validos and dia not in feriados:
-                        cantidad_min = 0
-                        cantidad_max = 0
+                        cantidad_min, cantidad_max = 0, 0
                     else:
                         cantidad_min = ajuste_encontrado.get("cantidad_min")
                         cantidad_max = ajuste_encontrado.get("cantidad_max")
@@ -309,310 +155,225 @@ def aplicar_reglas_duras(modelo, turnos, df_personal, demanda_turnos, metadata_t
                     cantidad_min = ajuste_encontrado.get("cantidad_min")
                     cantidad_max = ajuste_encontrado.get("cantidad_max")
             
-            if (cantidad_min is None or cantidad_min == 0) and (cantidad_max is None or cantidad_max == 0):
-                continue
-                
-            # El pool de variables se calcula ahora dinámicamente considerando cruces de medianoche
-
-            pool_vars = []
-            pool_posible = []
+            if (not cantidad_min) and (not cantidad_max): continue
             
-            d_abs_start = dia * 24 + time_to_float(demanda["hora_inicio"])
+            pool_vars = []
+            d_h_start = time_to_float(demanda["hora_inicio"])
             d_h_end = time_to_float(demanda["hora_fin"])
-            d_abs_end = dia * 24 + (d_h_end if (d_h_end > 0 or time_to_float(demanda["hora_inicio"]) == 0) else 24)
+            d_abs_start = dia * 24 + d_h_start
+            
+            if d_h_end <= d_h_start and not (d_h_start == 0 and d_h_end == 0):
+                d_abs_end = (dia + 1) * 24 + d_h_end
+            elif d_h_end == 0 and d_h_start > 0:
+                d_abs_end = (dia + 1) * 24
+            else:
+                d_abs_end = dia * 24 + d_h_end
 
-            for _, p in df_personal.iterrows():
-                nombre = p['Nombre']
-                
-                # Turnos que podrían cubrir este bloque (Hoy o Ayer)
+            for emp in empleados:
                 for d_off in [0, -1]:
                     dia_t = dia + d_off
-                    
                     if dia_t < 0:
-                        # Revisar historial de la semana previa (Dia -1)
-                        if historial_semana_previa:
-                            # Buscar si trabajó un turno que cruza a hoy
-                            prev_guards = historial_semana_previa.get(nombre, [])
+                        if historial:
+                            prev_guards = historial.get(emp.nombre, [])
                             fecha_ayer = (fecha_inicio_dt + timedelta(days=-1)).strftime("%Y-%m-%d")
                             for g in prev_guards:
                                 if g['fecha'] == fecha_ayer:
                                     t_prev_nombre = g['turno']
-                                    if t_prev_nombre in metadata_turnos:
-                                        t_info = metadata_turnos[t_prev_nombre]
-                                        ts_abs = -1 * 24 + time_to_float(t_info["hora_inicio"])
-                                        te_abs = ts_abs + t_info["horas"]
+                                    if t_prev_nombre in turnos_dict:
+                                        t_info = turnos_dict[t_prev_nombre]
+                                        ts_abs = -1 * 24 + time_to_float(t_info.hora_inicio)
+                                        te_abs = ts_abs + t_info.horas
                                         if ts_abs <= d_abs_start + 0.01 and te_abs >= d_abs_end - 0.01:
-                                            # Es una constante, no una variable del modelo
-                                            # Pero como estamos en el bloque de 'pool_vars' del modelo, 
-                                            # si el historial ya cubre 1 cupo, deberíamos restar 1 a la demanda?
-                                            # O simplemente añadir una constante 1 al sum(pool_vars)?
-                                            pool_vars.append(1) 
-                                            pool_posible.append(f"{nombre}(H:{t_prev_nombre})")
+                                            pool_vars.append(1)
                         continue
 
-                    if dia_t in get_dias_bloqueados(nombre):
-                        continue
+                    if dia_t in emp.dias_licencia: continue
 
-                    for t_nombre, t_info in metadata_turnos.items():
-                        if t_info["puesto_id"] == demanda["puesto_id"]:
-                            # Validar si el turno existe en el modelo para ese dia
-                            if (nombre, dia_t, t_nombre) in turnos:
-                                ts_abs = dia_t * 24 + time_to_float(t_info["hora_inicio"])
-                                te_abs = ts_abs + t_info["horas"]
-                                
-                                if ts_abs <= d_abs_start + 0.01 and te_abs >= d_abs_end - 0.01:
-                                    pool_vars.append(turnos[(nombre, dia_t, t_nombre)])
-                                    pool_posible.append(f"{nombre}(d{dia_t}:{t_nombre})")
+                    for t_nombre, t_info in turnos_dict.items():
+                        # Solo sumar turnos que pertenezcan al mismo puesto de la demanda
+                        if t_info.puesto_nombre != demanda["puesto"]:
+                            continue
+                            
+                        if (emp.nombre, dia_t, t_nombre) in turnos_vars:
+                            # Filtro heurístico de Puesto usando la lógica vieja o simplemente evaluando hora
+                            ts_abs = dia_t * 24 + time_to_float(t_info.hora_inicio)
+                            te_abs = ts_abs + t_info.horas
+                            if ts_abs <= d_abs_start + 0.01 and te_abs >= d_abs_end - 0.01:
+                                pool_vars.append(turnos_vars[(emp.nombre, dia_t, t_nombre)])
 
             if cantidad_min is not None and cantidad_min > 0:
-                if len(pool_posible) < cantidad_min:
-                    print(f"[ERROR CRITICO] Dia {fecha_str} ({tipo_dia}) Puesto {demanda['puesto']} {demanda['hora_inicio']}-{demanda['hora_fin']}: Se necesitan {cantidad_min} pero solo hay {len(pool_posible)} disponibles: {pool_posible}")
-                
-            if cantidad_min is not None:
-                modelo.Add(sum(pool_vars) >= cantidad_min)
+                if dia == 0 and time_to_float(demanda["hora_fin"]) <= 8: pass
+                else: modelo.Add(sum(pool_vars) >= cantidad_min)
             
             if cantidad_max is not None:
                 modelo.Add(sum(pool_vars) <= cantidad_max)
 
-    # 5. LIMITE DE HORAS SEMANALES
-    if DEBUG_DISABLE_MAX_HORAS:
-        if DEBUG_LOGS: print("[MAX HORAS] Limite de horas semanales DESACTIVADO (DEBUG_DISABLE_MAX_HORAS=True)")
-    else:
-        for index, persona in df_personal.iterrows():
-            nombre = persona['Nombre']
-            historial_persona = historial_semana_previa.get(nombre, []) if historial_semana_previa else []
+def _aplicar_limite_horas_semanales(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas, historial, demanda_turnos, turnos_dict, offset_dia, feriados, limite_global):
+    if DEBUG_DISABLE_MAX_HORAS: return
+    for emp in empleados:
+        hist_emp = historial.get(emp.nombre, []) if historial else []
+        for (iso_year, iso_week), days in semanas_calendario.items():
+            first_day_of_week = days[0][1]
+            fecha_lunes = (first_day_of_week - timedelta(days=first_day_of_week.isocalendar()[2] - 1)).isoformat()
+            
+            prev_en_sem = [h for h in hist_emp if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_year, iso_week)]
+            horas_previas = sum(h['horas'] for h in prev_en_sem)
+            
+            horas_semanales = []
+            for d, fd in days:
+                es_f = _is_finde(d, offset_dia, feriados)
+                td = "Finde_Feriado" if es_f else "Semana"
+                for t in demanda_turnos.get(td, {}).keys():
+                    if (emp.nombre, d, t) in turnos_vars:
+                        h_turno = turnos_dict[t].horas if t in turnos_dict else 6
+                        horas_semanales.append(turnos_vars[(emp.nombre, d, t)] * h_turno)
+                        
+            if horas_semanales or horas_previas > 0:
+                params = _re.resolver_parametros_regla('MAX_HORAS_SEMANA', emp.nombre, fecha_lunes, reglas_servicio, emp.reglas, ajustes_reglas)
+                if _re.regla_existe(params):
+                    limite = params.get('limite', limite_global) if isinstance(params, dict) else limite_global
+                    modelo.Add(sum(horas_semanales) + horas_previas <= limite)
 
-            for (iso_year, iso_week), days in semanas_calendario.items():
-                first_day_of_week = days[0][1]
-                fecha_lunes = (first_day_of_week - timedelta(days=first_day_of_week.isocalendar()[2] - 1)).isoformat()
-
-                turnos_previos_en_semana = [h for h in historial_persona if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_year, iso_week)]
-                horas_previas = sum(h['horas'] for h in turnos_previos_en_semana)
-
-                horas_semanales = []
-                for d, fd in days:
-                    es_finde = ((d + offset_dia) % 7) >= 5 or d in feriados
-                    tipo_dia_h = "Finde_Feriado" if es_finde else "Semana"
-                    for t in demanda_turnos.get(tipo_dia_h, {}).keys():
-                        if (nombre, d, t) in turnos:
-                            h_turno = 12 if (es_finde or t.startswith("Noche") or t.startswith("Dia")) else 6
-                            horas_semanales.append(turnos[(nombre, d, t)] * h_turno)
-                
-                if horas_semanales or horas_previas > 0:
-                    params = _re.resolver_parametros_regla(
-                        'MAX_HORAS_SEMANA', nombre, fecha_lunes,
-                        reglas_servicio, reglas_personal, ajustes_reglas_personal
-                    )
-                    if _re.regla_existe(params):
-                        limite_semanal = params.get('limite', limite_horas_global) if isinstance(params, dict) else limite_horas_global
-                        modelo.Add(sum(horas_semanales) + horas_previas <= limite_semanal)
-
-    # 6. DESCANSO POST-NOCHE (Obsoleto - Migrado a regla 167)
-    pass
-
-    # 6b. DESCANSO ENTRE TURNOS (General)
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
+def _aplicar_descanso_entre_turnos(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas, offset_dia, feriados, demanda_turnos, turnos_dict):
+    for emp in empleados:
         for d in range(dias_del_bloque - 1):
             fecha_d = (fecha_inicio_dt + timedelta(days=d)).isoformat()
-            params_rest = _re.resolver_parametros_regla(
-                'DESCANSO_ENTRE_TURNOS', nombre, fecha_d,
-                reglas_servicio, reglas_personal, ajustes_reglas_personal
-            )
-            if not _re.regla_existe(params_rest):
-                continue
+            params = _re.resolver_parametros_regla('DESCANSO_ENTRE_TURNOS', emp.nombre, fecha_d, reglas_servicio, emp.reglas, ajustes_reglas)
+            if not _re.regla_existe(params): continue
             
-            # Formato nuevo: {"por_turno": {"G": 48, "D": 24}}
-            config_descanso = params_rest.get('por_turno')
-
-            # Turnos hoy
-            es_f_hoy = ((d + offset_dia) % 7) >= 5 or d in feriados
-            tipo_dia_hoy = "Finde_Feriado" if es_f_hoy else "Semana"
-            turnos_hoy_nombres = [t for t in demanda_turnos.get(tipo_dia_hoy, {}).keys() if (nombre, d, t) in turnos]
+            config_descanso = params.get('por_turno')
+            td_hoy = "Finde_Feriado" if _is_finde(d, offset_dia, feriados) else "Semana"
+            turnos_hoy = [t for t in demanda_turnos.get(td_hoy, {}).keys() if (emp.nombre, d, t) in turnos_vars]
             
-            for t1 in turnos_hoy_nombres:
-                t1_info = metadata_turnos.get(t1)
-                if not t1_info: continue
-                
+            for t1 in turnos_hoy:
+                if t1 not in turnos_dict: continue
+                t1_info = turnos_dict[t1]
                 min_descanso = None
                 if config_descanso:
-                    for key, value in config_descanso.items():
-                        if key in t1: # Bsqueda parcial (ej: "G" en "G_Planta")
-                            min_descanso = value
-                            break
+                    for k, v in config_descanso.items():
+                        if k in t1:
+                            min_descanso = v; break
+                if not min_descanso: continue
                 
-                if min_descanso is None:
-                    raise ValueError(f"❌ ERROR: El turno '{t1}' no tiene configurado el descanso en la regla DESCANSO_ENTRE_TURNOS (Servicio {servicio_id}).")
-
-                t1_start = time_to_float(t1_info["hora_inicio"])
-                t1_end = t1_start + t1_info["horas"]
-                
-                # Revisar das a futuro (ej: si son 48hs, hay que ver d+1 y d+2)
+                t1_end = time_to_float(t1_info.hora_inicio) + t1_info.horas
                 max_dias_futuro = math.ceil(min_descanso / 24) + 1
                 for d_fut in range(d + 1, min(d + max_dias_futuro, dias_del_bloque)):
-                    es_f_fut = ((d_fut + offset_dia) % 7) >= 5 or (d_fut in feriados)
-                    tipo_dia_fut = "Finde_Feriado" if es_f_fut else "Semana"
-                    turnos_man_nombres = [t for t in demanda_turnos.get(tipo_dia_fut, {}).keys() if (nombre, d_fut, t) in turnos]
-                    
-                    for t2 in turnos_man_nombres:
-                        t2_info = metadata_turnos.get(t2)
-                        if not t2_info: continue
-                        t2_start = (d_fut - d) * 24 + time_to_float(t2_info["hora_inicio"])
-                        
+                    td_fut = "Finde_Feriado" if _is_finde(d_fut, offset_dia, feriados) else "Semana"
+                    turnos_man = [t for t in demanda_turnos.get(td_fut, {}).keys() if (emp.nombre, d_fut, t) in turnos_vars]
+                    for t2 in turnos_man:
+                        if t2 not in turnos_dict: continue
+                        t2_start = (d_fut - d) * 24 + time_to_float(turnos_dict[t2].hora_inicio)
                         if t2_start - t1_end < min_descanso - 0.01:
-                            modelo.Add(turnos[(nombre, d, t1)] + turnos[(nombre, d_fut, t2)] <= 1)
-                        
+                            modelo.Add(turnos_vars[(emp.nombre, d, t1)] + turnos_vars[(emp.nombre, d_fut, t2)] <= 1)
 
-    # 7. UN SOLO TURNO POR DÍA
-    # Cubre todas las incompatibilidades: no se puede hacer mañana+noche,
-    # tarde+noche, mañana_UTI+mañana_UCO, ni ninguna otra combinación el mismo día.
-    # Excepción: si la persona tiene múltiples ASIGNACION_FIJA en el mismo día.
+def _aplicar_un_solo_turno_por_dia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas):
     mapa_dias = {"Lunes": 0, "Martes": 1, "Miercoles": 2, "Jueves": 3, "Viernes": 4, "Sabado": 5, "Domingo": 6}
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
+    for emp in empleados:
         for d in range(dias_del_bloque):
-            es_f = ((d + offset_dia) % 7) >= 5 or d in feriados
-            tipo_dia = "Finde_Feriado" if es_f else "Semana"
+            td = "Finde_Feriado" if _is_finde(d, offset_dia, feriados) else "Semana"
             dia_semana = (d + offset_dia) % 7
-            fecha_d_str = (fecha_inicio_dt + timedelta(days=d)).isoformat()
+            fecha_d = (fecha_inicio_dt + timedelta(days=d)).isoformat()
             
             fijos_hoy = 0
-            params_asig = _re.resolver_parametros_regla(
-                'ASIGNACION_FIJA', nombre, fecha_d_str,
-                reglas_servicio, reglas_personal, ajustes_reglas_personal
-            )
-            if _re.regla_existe(params_asig) and isinstance(params_asig, list):
-                for asig in params_asig:
-                    if mapa_dias.get(asig.get('Dia')) == dia_semana:
-                        fijos_hoy += 1
-                        
-            max_turnos_dia = max(1, fijos_hoy)
-
-            todos_turnos_dia = [
-                turnos[(nombre, d, t)]
-                for t in demanda_turnos.get(tipo_dia, {}).keys()
-                if (nombre, d, t) in turnos
-            ]
-            if todos_turnos_dia:
-                modelo.Add(sum(todos_turnos_dia) <= max_turnos_dia)
-
-    # 8. FINDE LARGO REGLAMENTARIO (FLR) - Movido a soft_rules.py como regla blanda de alta prioridad
-    pass
-
-
-    # 9. MÁXIMO DE HORAS POR MES CALENDARIO (Hard Limit)
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
-        params_max_horas_cal = _re.resolver_parametros_regla(
-            'MAX_HORAS_MES_CALENDARIO', nombre, FECHA_INICIO, 
-            reglas_servicio, reglas_personal, ajustes_reglas_personal
-        )
-        if not _re.regla_suspendida(params_max_horas_cal):
-            max_h_total_permitido = params_max_horas_cal.get('max_horas', 144) if isinstance(params_max_horas_cal, dict) else 144
+            params = _re.resolver_parametros_regla('ASIGNACION_FIJA', emp.nombre, fecha_d, reglas_servicio, emp.reglas, ajustes_reglas)
+            if _re.regla_existe(params) and isinstance(params, list):
+                for asig in params:
+                    if mapa_dias.get(asig.get('Dia')) == dia_semana: fijos_hoy += 1
             
-            # Agrupar por mes calendario y aplicar tope pro-rata
-            meses_en_bloque = {}
-            for d in range(dias_del_bloque):
-                m_key = (fecha_inicio_dt + timedelta(days=d)).strftime("%Y-%m")
-                meses_en_bloque.setdefault(m_key, []).append(d)
-                
-            dias_bloqueados_p = get_dias_bloqueados(nombre)
+            max_t = max(1, fijos_hoy)
+            todos = [turnos_vars[(emp.nombre, d, t)] for t in demanda_turnos.get(td, {}).keys() if (emp.nombre, d, t) in turnos_vars]
+            if todos: modelo.Add(sum(todos) <= max_t)
+
+def _aplicar_max_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas):
+    from data import FECHA_INICIO
+    for emp in empleados:
+        # Primero agrupar días por mes para aplicar el tope mensual correspondiente
+        meses = {}
+        for d in range(dias_del_bloque):
+            m_key = (fecha_inicio_dt + timedelta(days=d)).strftime("%Y-%m")
+            meses.setdefault(m_key, []).append(d)
             
-            for m_key, dias_m in meses_en_bloque.items():
-                # Horas efectivas en este mes
-                vars_horas_m = []
+        for m_key, dias_m in meses.items():
+            # Resolver parámetros para el mes específico (usando el primer día del mes en el bloque)
+            ref_date = (fecha_inicio_dt + timedelta(days=dias_m[0])).isoformat()
+            params = _re.resolver_parametros_regla('MAX_HORAS_MES_CALENDARIO', emp.nombre, ref_date, reglas_servicio, emp.reglas, ajustes_reglas)
+            
+            if not _re.regla_suspendida(params):
+                max_h = params.get('max_horas', 144) if isinstance(params, dict) else 144
+                vars_h = []
                 for d in dias_m:
-                    es_f = ((d + offset_dia) % 7) >= 5 or d in feriados
-                    tipo_dia_h = "Finde_Feriado" if es_f else "Semana"
-                    for t in demanda_turnos.get(tipo_dia_h, {}).keys():
-                        if (nombre, d, t) in turnos:
-                            t_info = metadata_turnos.get(t)
-                            h_turno = t_info["horas"] if t_info else 6
-                            vars_horas_m.append(turnos[(nombre, d, t)] * h_turno)
+                    td = "Finde_Feriado" if _is_finde(d, offset_dia, feriados) else "Semana"
+                    for t in demanda_turnos.get(td, {}).keys():
+                        if (emp.nombre, d, t) in turnos_vars:
+                            h_turno = turnos_dict[t].horas if t in turnos_dict else 6
+                            vars_h.append(turnos_vars[(emp.nombre, d, t)] * h_turno)
                 
-                # Horas de licencia pro-rata (igual que en el reporte y soft_rules)
-                dias_lic_m = [d for d in dias_m if d in dias_bloqueados_p]
-                val_dia = 144.0 / dias_del_bloque
-                horas_licencia_m = int(val_dia * len(dias_lic_m) + 0.5)
+                dias_lic = [d for d in dias_m if d in emp.dias_licencia]
+                # --- NUEVA LÓGICA DE CRÉDITO POR LICENCIA ---
+                p_cred = _re.resolver_parametros_regla('CREDITO_HORARIO_LICENCIA', emp.nombre, ref_date, reglas_servicio, emp.reglas, ajustes_reglas)
+                if _re.regla_existe(p_cred):
+                    h_sem = p_cred.get('horas_por_semana', 36)
+                    horas_lic = int((h_sem / 7.0) * len(dias_lic) + 0.5)
+                else:
+                    # Fallback proporcional (Enfermería)
+                    horas_lic = int((float(max_h) / dias_del_bloque) * len(dias_lic) + 0.5)
                 
-                # Tope pro-rata para este tramo del mes
-                tope_pro_rata = int((max_h_total_permitido / dias_del_bloque) * len(dias_m) + 0.5)
+                tope = int((max_h / dias_del_bloque) * len(dias_m) + 0.5)
                 
-                # Restricción: Efectivas + Licencia <= Tope
-                if vars_horas_m:
-                    modelo.Add(sum(vars_horas_m) + horas_licencia_m <= tope_pro_rata)
-                    
-    # 10. FIN_LICENCIA (Hard Limit)
-    def get_dias_licencia_pura(nombre):
-        dias = set()
-        for licencias in _get_licencias():
-            for (ini_str, fin_str) in licencias.get(nombre, []):
-                ini = date.fromisoformat(ini_str)
-                fin = date.fromisoformat(fin_str)
-                for d in range(dias_del_bloque):
-                    if ini <= fecha_inicio_dt + timedelta(days=d) <= fin:
-                        dias.add(d)
-        return dias
+                if vars_h:
+                    modelo.Add(sum(vars_h) + horas_lic <= tope)
 
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
-        params_fin_lic = _re.resolver_parametros_regla(
-            'FIN_LICENCIA', nombre, FECHA_INICIO,
-            reglas_servicio, reglas_personal, ajustes_reglas_personal
-        )
-        if _re.regla_existe(params_fin_lic):
-            lic_puras = get_dias_licencia_pura(nombre)
-            for d in range(dias_del_bloque - 1):
-                # Si hoy está de licencia pero mañana NO lo está
-                if d in lic_puras and (d+1) not in lic_puras:
-                    # Debe trabajar en algún turno el día d+1
-                    vars_manana = []
-                    es_f_sig = ((d+1 + offset_dia) % 7) >= 5 or (d+1 in feriados)
-                    tipo_dia_sig = "Finde_Feriado" if es_f_sig else "Semana"
-                    for t in demanda_turnos.get(tipo_dia_sig, {}).keys():
-                        if (nombre, d+1, t) in turnos:
-                            vars_manana.append(turnos[(nombre, d+1, t)])
-                    
-                    if vars_manana:
-                        modelo.Add(sum(vars_manana) >= 1)
+def _aplicar_fin_licencia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos):
+    for emp in empleados:
+        for d in range(dias_del_bloque - 1):
+            if d in emp.dias_licencia and (d+1) not in emp.dias_licencia:
+                td_sig = "Finde_Feriado" if _is_finde(d+1, offset_dia, feriados) else "Semana"
+                vars_man = [turnos_vars[(emp.nombre, d+1, t)] for t in demanda_turnos.get(td_sig, {}).keys() if (emp.nombre, d+1, t) in turnos_vars]
+                if vars_man: modelo.Add(sum(vars_man) >= 1)
 
-    # 11. MÍNIMO DE HORAS POR MES CALENDARIO (Hard Limit)
-    for index, persona in df_personal.iterrows():
-        nombre = persona['Nombre']
-        params_min_horas_cal = _re.resolver_parametros_regla(
-            'MIN_HORAS_MES_CALENDARIO', nombre, FECHA_INICIO, 
-            reglas_servicio, reglas_personal, ajustes_reglas_personal
-        )
-        if _re.regla_existe(params_min_horas_cal):
-            min_h_total_objetivo = params_min_horas_cal.get('min_horas', 120) if isinstance(params_min_horas_cal, dict) else 120
+def _aplicar_min_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas):
+    from data import FECHA_INICIO
+    for emp in empleados:
+        # Agrupar días por mes
+        meses = {}
+        for d in range(dias_del_bloque):
+            m_key = (fecha_inicio_dt + timedelta(days=d)).strftime("%Y-%m")
+            meses.setdefault(m_key, []).append(d)
             
-            meses_en_bloque = {}
-            for d in range(dias_del_bloque):
-                m_key = (fecha_inicio_dt + timedelta(days=d)).strftime("%Y-%m")
-                meses_en_bloque.setdefault(m_key, []).append(d)
+        for m_key, dias_m in meses.items():
+            # Resolver parámetros para el mes específico
+            ref_date = (fecha_inicio_dt + timedelta(days=dias_m[0])).isoformat()
+            p_min = _re.resolver_parametros_regla('MIN_HORAS_MES_CALENDARIO', emp.nombre, ref_date, reglas_servicio, emp.reglas, ajustes_reglas)
+            p_max = _re.resolver_parametros_regla('MAX_HORAS_MES_CALENDARIO', emp.nombre, ref_date, reglas_servicio, emp.reglas, ajustes_reglas)
+            
+            if _re.regla_existe(p_min) and not _re.regla_suspendida(p_min):
+                min_h = p_min.get('min_horas', 144) if isinstance(p_min, dict) else 144
                 
-            dias_bloqueados_p = get_dias_bloqueados(nombre)
-            
-            for m_key, dias_m in meses_en_bloque.items():
-                vars_horas_m = []
+                # Si hay un tope máximo definido, el mínimo no puede ser mayor que el máximo
+                if not _re.regla_suspendida(p_max):
+                    max_h_ref = p_max.get('max_horas', 192) if isinstance(p_max, dict) else 192
+                    if min_h > max_h_ref:
+                        min_h = max_h_ref
+                
+                vars_h = []
                 for d in dias_m:
-                    es_f = ((d + offset_dia) % 7) >= 5 or d in feriados
-                    tipo_dia_h = "Finde_Feriado" if es_f else "Semana"
-                    for t in demanda_turnos.get(tipo_dia_h, {}).keys():
-                        if (nombre, d, t) in turnos:
-                            t_info = metadata_turnos.get(t)
-                            h_turno = t_info["horas"] if t_info else 6
-                            vars_horas_m.append(turnos[(nombre, d, t)] * h_turno)
+                    td = "Finde_Feriado" if _is_finde(d, offset_dia, feriados) else "Semana"
+                    for t in demanda_turnos.get(td, {}).keys():
+                        if (emp.nombre, d, t) in turnos_vars:
+                            h_turno = turnos_dict[t].horas if t in turnos_dict else 6
+                            vars_h.append(turnos_vars[(emp.nombre, d, t)] * h_turno)
                 
-                # Horas de licencia pro-rata (igual que en Rule 9)
-                dias_lic_m = [d for d in dias_m if d in dias_bloqueados_p]
-                val_dia = 144.0 / dias_del_bloque
-                horas_licencia_m = int(val_dia * len(dias_lic_m) + 0.5)
+                dias_lic = [d for d in dias_m if d in emp.dias_licencia]
+                # --- NUEVA LÓGICA DE CRÉDITO POR LICENCIA ---
+                p_cred = _re.resolver_parametros_regla('CREDITO_HORARIO_LICENCIA', emp.nombre, ref_date, reglas_servicio, emp.reglas, ajustes_reglas)
+                if _re.regla_existe(p_cred):
+                    h_sem = p_cred.get('horas_por_semana', 36)
+                    horas_lic = int((h_sem / 7.0) * len(dias_lic) + 0.5)
+                else:
+                    # Fallback proporcional (Enfermería)
+                    horas_lic = int((float(min_h) / dias_del_bloque) * len(dias_lic) + 0.5)
+
+                piso = int((min_h / dias_del_bloque) * len(dias_m) + 0.5)
                 
-                # Mínimo pro-rata para este tramo del mes
-                min_pro_rata = int((min_h_total_objetivo / dias_del_bloque) * len(dias_m) + 0.5)
-                
-                # Restricción: Efectivas + Licencia >= Mínimo
-                if vars_horas_m:
-                    modelo.Add(sum(vars_horas_m) + horas_licencia_m >= min_pro_rata)
-                        
+                if vars_h:
+                    modelo.Add(sum(vars_h) + horas_lic >= piso)

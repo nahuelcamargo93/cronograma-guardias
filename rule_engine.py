@@ -53,8 +53,8 @@ def resolver_parametros_regla(
     # ─── 2. REGLA PERSONAL ────────────────────────────────────────────────────
     # Configuración individual que no tiene límite de tiempo.
     # (cargar_reglas_personal devuelve listas; tomamos la primera si aplica)
-    if nombre in reglas_personal and codigo_regla in reglas_personal[nombre]:
-        valor = reglas_personal[nombre][codigo_regla]
+    if codigo_regla in reglas_personal:
+        valor = reglas_personal[codigo_regla]
         # Si la regla personal es una lista de dicts (ej. EXCLUIR_TURNOS), la devolvemos tal cual.
         # Si es un dict simple, también.
         return valor
@@ -83,3 +83,4 @@ def regla_suspendida(params):
     if isinstance(params, dict) and params.get('suspendida') is True:
         return True
     return False
+

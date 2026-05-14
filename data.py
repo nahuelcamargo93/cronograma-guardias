@@ -17,12 +17,12 @@ DEBUG_DISABLE_MAX_HORAS      = False  # Si True: desactiva limite de horas seman
 # --- PERÍODO DEL CRONOGRAMA ---
 # FECHA_INICIO = "2026-05-25"
 # FECHA_FIN    = "2026-07-05"  # Inclusive. El rango debe ser múltiplo de 7 días.
-FECHA_INICIO = "2026-07-01"
-FECHA_FIN    = "2026-07-31"
+FECHA_INICIO = "2026-06-01"
+FECHA_FIN    = "2026-06-30"
 
 # --- SERVICIO ACTIVO ---
 # ID del servicio para el cual se genera este cronograma y su reporte.
-SERVICIO_ID = 2
+SERVICIO_ID = 3
 
 # Lista de feriados en formato "YYYY-MM-DD"
 FERIADOS = [
