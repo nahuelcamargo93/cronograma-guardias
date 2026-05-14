@@ -38,7 +38,14 @@ def exportar_excel_data_prep(df_resultados, config_turnos):
     if filas_extra:
         df_excel = pd.concat([df_excel, pd.DataFrame(filas_extra)], ignore_index=True)
         
+    fechas_originales = sorted(df_resultados['Fecha'].unique())
     fechas_unicas = sorted(df_excel['Fecha'].unique())
+    
+    # Asegurar que solo tomamos fechas dentro del bloque (el TNN el último día puede generar una fecha extra fuera del rango)
+    if fechas_originales:
+        fecha_limite_exclusiva = (date.fromisoformat(fechas_originales[-1]) + timedelta(days=1)).isoformat()
+        fechas_unicas = [f for f in fechas_unicas if f < fecha_limite_exclusiva]
+    
     # Orden cronológico: Noche (00-06) primero, Tarde-Noche (18-00) último
     turnos_ordenados = ["N", "M", "T", "TN"]
                 
@@ -175,7 +182,7 @@ def generar_reporte(df_resultados, df_personal, dias_del_bloque, feriados, fecha
     print(reporte_final.to_string())
     return reporte_final
 
-def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, file_name='Cronograma_Enfermeria_UTI.xlsx'):
+def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, df_resultados, df_cat_semanas=None, file_name='Cronograma_Enfermeria_UTI.xlsx'):
     with pd.ExcelWriter(file_name, engine='xlsxwriter') as writer:
         # --- HOJA 1: CRONOGRAMA POR TURNOS ---
         df_pivot.to_excel(writer, sheet_name='Cronograma')
@@ -215,12 +222,24 @@ def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, file_name='C
         
         # Formatos
         fmt_header_blue = workbook.add_format({'bold': True, 'bg_color': '#BDD7EE', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        fmt_header_blue_sun = workbook.add_format({'bold': True, 'bg_color': '#BDD7EE', 'border': 1, 'right': 5, 'align': 'center', 'valign': 'vcenter'})
+        
         fmt_header_light = workbook.add_format({'bold': True, 'bg_color': '#DDEBF7', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 9})
+        fmt_header_light_sun = workbook.add_format({'bold': True, 'bg_color': '#DDEBF7', 'border': 1, 'right': 5, 'align': 'center', 'valign': 'vcenter', 'font_size': 9})
+        
         fmt_name = workbook.add_format({'bold': True, 'bg_color': '#FCE4D6', 'border': 1, 'valign': 'vcenter'})
         fmt_cell = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 9})
-        fmt_sunday = workbook.add_format({'border': 1, 'right': 5, 'align': 'center', 'valign': 'vcenter', 'font_size': 9}) # right: 5 es grueso
+        fmt_sunday = workbook.add_format({'border': 1, 'right': 5, 'align': 'center', 'valign': 'vcenter', 'font_size': 9}) 
+        
         fmt_total_label = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'right'})
         fmt_total_val = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
+        fmt_total_val_sun = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'right': 5, 'align': 'center'})
+
+        # Formatos especiales para F, LAR, LPP
+        fmt_grey = workbook.add_format({'bg_color': '#D9D9D9', 'font_color': '#595959', 'border': 1, 'align': 'center'})
+        fmt_grey_sun = workbook.add_format({'bg_color': '#D9D9D9', 'font_color': '#595959', 'border': 1, 'right': 5, 'align': 'center'})
+        fmt_dark_grey = workbook.add_format({'bg_color': '#A6A6A6', 'font_color': '#FFFFFF', 'bold': True, 'border': 1, 'align': 'center'})
+        fmt_dark_grey_sun = workbook.add_format({'bg_color': '#A6A6A6', 'font_color': '#FFFFFF', 'bold': True, 'border': 1, 'right': 5, 'align': 'center'})
 
         # Escribir Cabeceras (2 filas)
         ws_p.write(0, 0, "APELLIDO Y NOMBRE", fmt_header_blue)
@@ -233,20 +252,26 @@ def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, file_name='C
             sigla = siglas_dias[dt.weekday()]
             dia_num = f"{dt.day}/{dt.month}"
             
-            style = fmt_header_blue if dt.weekday() != 6 else workbook.add_format({'bold': True, 'bg_color': '#BDD7EE', 'border': 1, 'right': 5, 'align': 'center'})
-            ws_p.write(0, col_idx + 1, sigla, style)
+            style_h = fmt_header_blue if dt.weekday() != 6 else fmt_header_blue_sun
+            ws_p.write(0, col_idx + 1, sigla, style_h)
             
-            style_l = fmt_header_light if dt.weekday() != 6 else workbook.add_format({'bold': True, 'bg_color': '#DDEBF7', 'border': 1, 'right': 5, 'align': 'center', 'font_size': 9})
+            style_l = fmt_header_light if dt.weekday() != 6 else fmt_header_light_sun
             ws_p.write(1, col_idx + 1, dia_num, style_l)
             ws_p.set_column(col_idx + 1, col_idx + 1, 5)
 
-        # Totales de Horas al final
+        # Totales de Horas y Conteos al final
         col_offset = len(fechas_unicas) + 1
         ws_p.merge_range(0, col_offset, 1, col_offset, "H. Efectivas", fmt_header_blue)
         ws_p.merge_range(0, col_offset + 1, 1, col_offset + 1, "H. Licencia", fmt_header_blue)
         ws_p.merge_range(0, col_offset + 2, 1, col_offset + 2, "H. Totales", fmt_header_blue)
-        ws_p.merge_range(0, col_offset + 3, 1, col_offset + 3, "Francos", fmt_header_blue)
-        ws_p.set_column(col_offset, col_offset + 3, 10)
+        
+        # Columnas de categorización de semanas (objetivo de rotación)
+        tipos_de_semana = ['M', 'T', 'TN', 'N']
+        for i, t_label in enumerate(tipos_de_semana):
+            ws_p.merge_range(0, col_offset + 3 + i, 1, col_offset + 3 + i, f"{t_label}", fmt_header_blue)
+        
+        ws_p.set_column(col_offset, col_offset + 2, 10)
+        ws_p.set_column(col_offset + 3, col_offset + 3 + len(tipos_de_semana) - 1, 7)
 
         # Escribir Datos de Personal
         fila_excel = 2
@@ -256,17 +281,14 @@ def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, file_name='C
                 val = row[fecha]
                 dt = date.fromisoformat(fecha)
                 
-                # Formato base
+                # Seleccionar formato según el día y el valor
                 fmt = fmt_cell
                 if dt.weekday() == 6: fmt = fmt_sunday
                 
-                # Colores por tipo
                 if val in ["F", "LAR", "LPP"]:
-                    fmt = workbook.add_format({'bg_color': '#D9D9D9', 'font_color': '#595959', 'border': 1, 'align': 'center'})
-                    if dt.weekday() == 6: fmt.set_right(5)
+                    fmt = fmt_grey if dt.weekday() != 6 else fmt_grey_sun
                 elif val == "FLR":
-                    fmt = workbook.add_format({'bg_color': '#A6A6A6', 'font_color': '#FFFFFF', 'bold': True, 'border': 1, 'align': 'center'})
-                    if dt.weekday() == 6: fmt.set_right(5)
+                    fmt = fmt_dark_grey if dt.weekday() != 6 else fmt_dark_grey_sun
                 
                 ws_p.write(fila_excel, col_idx + 1, val, fmt)
             
@@ -274,7 +296,13 @@ def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, file_name='C
             ws_p.write(fila_excel, col_offset, row["Horas Efectivas"], fmt_cell)
             ws_p.write(fila_excel, col_offset + 1, row["Horas Licencia"], fmt_cell)
             ws_p.write(fila_excel, col_offset + 2, row["Horas Totales"], fmt_cell)
-            ws_p.write(fila_excel, col_offset + 3, row["F"], fmt_cell)
+            
+            # Conteo de categorías de semanas (vía df_cat_semanas)
+            for i, t_label in enumerate(tipos_de_semana):
+                conteo = 0
+                if df_cat_semanas is not None and not df_cat_semanas.empty:
+                    conteo = len(df_cat_semanas[(df_cat_semanas['Nombre'] == nombre) & (df_cat_semanas['Categoria'] == t_label)])
+                ws_p.write(fila_excel, col_offset + 3 + i, conteo, fmt_cell)
             fila_excel += 1
 
         # --- FILA VACÍA Y TOTALES POR FRANJA ---
@@ -303,11 +331,7 @@ def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, file_name='C
             for col_idx, fecha in enumerate(fechas_unicas):
                 dt = date.fromisoformat(fecha)
                 count = len(df_desdoblado[(df_desdoblado['Fecha'] == fecha) & (df_desdoblado['Turno'] == turno_count)])
-                
-                fmt = fmt_total_val
-                if dt.weekday() == 6:
-                    fmt = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'right': 5, 'align': 'center'})
-                
+                fmt = fmt_total_val if dt.weekday() != 6 else fmt_total_val_sun
                 ws_p.write(fila_excel, col_idx + 1, count if count > 0 else 0, fmt)
             fila_excel += 1
 
@@ -315,8 +339,8 @@ def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, file_name='C
 
     print("¡Excel generado con éxito! Archivo:", file_name)
 
-def generar_y_exportar(df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, flrs_asignados=None):
+def generar_y_exportar(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, config_turnos, num_semanas, flrs_asignados=None, df_cat_semanas=None):
     df_pivot, fechas_unicas = exportar_excel_data_prep(df_resultados, config_turnos)
     df_persona = exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados)
-    df_reporte = generar_reporte(df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, num_semanas)
-    exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas)
+    df_reporte = generar_reporte(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, num_semanas)
+    exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, df_resultados, df_cat_semanas)

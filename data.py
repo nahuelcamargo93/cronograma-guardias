@@ -34,63 +34,8 @@ DIA_DEL_PADRE   = "2026-06-21"  # Tercer domingo de junio
 DIA_DE_LA_MADRE = "2026-10-18"  # Tercer domingo de octubre
 
 # --- PERSONAL ---
-# Solo Nombre y Rol. Todas las demás propiedades (prohibiciones,
-# seguimientos, asignaciones fijas, límites, vacantes) se
-# configuran en la base de datos.
-PERSONAL = [
-    {'Nombre': 'ABELENDA GRISELL', 'Rol': 'Rotativo'},
-    {'Nombre': 'ALBELO TANIA', 'Rol': 'Rotativo'},
-    {'Nombre': 'ALCARAZ ELIANA', 'Rol': 'Rotativo'},
-    {'Nombre': 'ALCARAZ FRANCISO', 'Rol': 'Rotativo'},
-    {'Nombre': 'ANDREOLI LUCIANA', 'Rol': 'Rotativo'},
-    {'Nombre': 'ARCE DANIEL', 'Rol': 'Rotativo'},
-    {'Nombre': 'ASTUDILLO MELINA', 'Rol': 'Rotativo'},
-    {'Nombre': 'BARROSO ERICA', 'Rol': 'Rotativo'},
-    {'Nombre': 'BASCUR ALEJANDRA', 'Rol': 'Rotativo'},
-    {'Nombre': 'BORIA MAYRA', 'Rol': 'Rotativo'},
-    {'Nombre': 'CALDERON MARIA JOSE', 'Rol': 'Rotativo'},
-    {'Nombre': 'CAMPOS PRISCILA', 'Rol': 'Rotativo'},
-    {'Nombre': 'CARRERAS FLAVIA', 'Rol': 'Rotativo'},
-    {'Nombre': 'CASTRO LUCIANO', 'Rol': 'Rotativo'},
-    {'Nombre': 'CORSO ARTURO', 'Rol': 'Rotativo'},
-    {'Nombre': 'CHIRINO CAROLINA', 'Rol': 'Rotativo'},
-    {'Nombre': 'CORIA LUCIANO', 'Rol': 'Rotativo'},
-    {'Nombre': 'DOMINGUEZ VERONICA', 'Rol': 'Rotativo'},
-    {'Nombre': 'DURAN JAZMIN', 'Rol': 'Rotativo'},
-    {'Nombre': 'ECHENIQUE ROCIO', 'Rol': 'Rotativo'},
-    {'Nombre': 'ESCALANTE CARLA', 'Rol': 'Rotativo'},
-    {'Nombre': 'ESCUDERO SERGIO', 'Rol': 'Rotativo'},
-    {'Nombre': 'FERNANDEZ PAOLA', 'Rol': 'Rotativo'},
-    {'Nombre': 'FERNANDEZ YESICA', 'Rol': 'Rotativo'},
-    {'Nombre': 'GIMENEZ KAREN', 'Rol': 'Rotativo'},
-    {'Nombre': 'GOMES STHEFANIA', 'Rol': 'Rotativo'},
-    {'Nombre': 'GOMEZ LOURDES', 'Rol': 'Rotativo'},
-    {'Nombre': 'GRABOVIECKI FERNANDA', 'Rol': 'Rotativo'},
-    {'Nombre': 'GUIAZU KARINA', 'Rol': 'Rotativo'},
-    {'Nombre': 'IRAZABAL MARIANGELES', 'Rol': 'Rotativo'},
-    {'Nombre': 'LUCERO MATIAS', 'Rol': 'Rotativo'},
-    {'Nombre': 'MAE LORENA', 'Rol': 'Rotativo'},
-    {'Nombre': 'MEDINA LAURA', 'Rol': 'Rotativo'},
-    {'Nombre': 'MIRANDA LUCIANA', 'Rol': 'Rotativo'},
-    {'Nombre': 'MIRANDA YANINA', 'Rol': 'Rotativo'},
-    {'Nombre': 'MONDONE PAULA', 'Rol': 'Rotativo'},
-    {'Nombre': 'NIEVAS CARLA', 'Rol': 'Rotativo'},
-    {'Nombre': 'OLGUIN LUCIA', 'Rol': 'Rotativo'},
-    {'Nombre': 'ORTIZ LAURA', 'Rol': 'Rotativo'},
-    {'Nombre': 'PALACIOS FACUNDO', 'Rol': 'Rotativo'},
-    {'Nombre': 'PALANA GRACIELA', 'Rol': 'Rotativo'},
-    {'Nombre': 'PEREIRA CRISTINA', 'Rol': 'Rotativo'},
-    {'Nombre': 'POLETTI NATALIA', 'Rol': 'Rotativo'},
-    {'Nombre': 'QUEVEDO CELESTE', 'Rol': 'Rotativo'},
-    {'Nombre': 'RINALDINI IVANA', 'Rol': 'Rotativo'},
-    {'Nombre': 'ROJAS JULIANA', 'Rol': 'Rotativo'},
-    {'Nombre': 'SOSA NAHUEL', 'Rol': 'Rotativo'},
-    {'Nombre': 'SUAREZ JESICA', 'Rol': 'Rotativo'},
-    {'Nombre': 'TULA DAIANA', 'Rol': 'Rotativo'},
-    {'Nombre': 'VELEZ DANIEL', 'Rol': 'Rotativo'},
-    {'Nombre': 'VELIZ LIONEL', 'Rol': 'Rotativo'},
-    {'Nombre': 'VERA JULIETA', 'Rol': 'Rotativo'},
-]
+# El personal se carga dinámicamente desde la base de datos
+# según el SERVICIO_ID activo.
 
 # --- HELPERS ---
 def asignar_horas(turno):

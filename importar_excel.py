@@ -17,7 +17,7 @@ import openpyxl
 import pandas as pd
 from datetime import date, timedelta
 from db import inicializar_db, get_connection, sincronizar_personal, _calcular_bloques_largos
-from data import PERSONAL
+from data import SERVICIO_ID
 
 # ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
 
@@ -118,7 +118,8 @@ def main():
     inicializar_db()
 
     import pandas as pd
-    df_personal = pd.DataFrame(PERSONAL)
+    personal = database.obtener_personal_db(SERVICIO_ID)
+    df_personal = pd.DataFrame(personal)
     sincronizar_personal(df_personal)
     print(f"[OK] Personal sincronizado ({len(df_personal)} personas)")
 

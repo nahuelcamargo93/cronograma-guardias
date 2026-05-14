@@ -397,6 +397,15 @@ def cargar_datos_personales_bd(df_personal):
     df_personal['regimen_trabajo'] = df_personal['Nombre'].map(lambda n: info.get(n, {}).get('regimen_trabajo'))
     return df_personal
 
+def obtener_personal_db(servicio_id):
+    """Retorna la lista de personal para un servicio específico."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT nombre, rol FROM personal WHERE servicio_id = ? ORDER BY nombre", 
+            (servicio_id,)
+        ).fetchall()
+    return [{'Nombre': r[0], 'Rol': r[1]} for r in rows]
+
 def sincronizar_personal(df_personal):
     """Inserta o actualiza el personal en la tabla dimensional."""
     with get_connection() as conn:

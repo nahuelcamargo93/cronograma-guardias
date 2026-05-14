@@ -2,7 +2,7 @@ import pandas as pd
 import datetime
 from datetime import date, timedelta
 from ortools.sat.python import cp_model
-from data import PERSONAL, asignar_horas, FECHA_INICIO, FECHA_FIN, FERIADOS, SERVICIO_ID
+from data import asignar_horas, FECHA_INICIO, FECHA_FIN, FERIADOS, SERVICIO_ID
 from hard_rules import aplicar_reglas_duras
 from soft_rules import aplicar_reglas_blandas
 import db as database
@@ -72,13 +72,13 @@ def construir_modelo(df_personal, demanda_turnos, metadata_turnos, demanda_req, 
                 modelo.Add(sum(vars_dia) <= 1)
 
     aplicar_reglas_duras(modelo, turnos, df_personal, demanda_turnos, metadata_turnos, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, historial_semana_previa=historial_semana_previa, flr_tracker=flr_tracker, servicio_id=servicio_id)
-    aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=servicio_id, flr_tracker=flr_tracker, historial_semana_previa=historial_semana_previa)
+    vars_turno_sem = aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=servicio_id, flr_tracker=flr_tracker, historial_semana_previa=historial_semana_previa, metadata_turnos=metadata_turnos)
     
-    return modelo, turnos, flr_tracker
+    return modelo, turnos, flr_tracker, vars_turno_sem
 
-def resolver_modelo(modelo, turnos, flr_tracker, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, config_turnos):
+def resolver_modelo(modelo, turnos, flr_tracker, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, config_turnos, vars_turno_sem=None):
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 180
+    solver.parameters.max_time_in_seconds = 300
     solver.parameters.num_search_workers = 8 # Utilizar múltiples núcleos
     solver.parameters.log_search_progress = True
     
@@ -117,11 +117,23 @@ def resolver_modelo(modelo, turnos, flr_tracker, df_personal, dias_del_bloque, f
 
         df_resultados = pd.DataFrame(resultados)
         
-        # Extraer FLR asignados
+        # Extraer categorización de semanas
+        cat_semanas = []
+        if vars_turno_sem:
+            for (nombre, fecha_lunes), vars_tipo in vars_turno_sem.items():
+                for t_tipo, var in vars_tipo.items():
+                    if solver.Value(var) == 1:
+                        cat_semanas.append({
+                            'Nombre': nombre,
+                            'Fecha_Lunes': fecha_lunes,
+                            'Categoria': t_tipo
+                        })
+        df_cat_semanas = pd.DataFrame(cat_semanas)
+        
+        # Extraer FLRs trackeados
         flrs_asignados = []
         for (nombre, d), var_flr in flr_tracker.items():
             if solver.Value(var_flr) == 1:
-                # El FLR dura 4 dias a partir de d
                 fi = (fecha_inicio_dt + pd.Timedelta(days=d)).strftime("%Y-%m-%d")
                 ff = (fecha_inicio_dt + pd.Timedelta(days=d+3)).strftime("%Y-%m-%d")
                 flrs_asignados.append({
@@ -132,14 +144,14 @@ def resolver_modelo(modelo, turnos, flr_tracker, df_personal, dias_del_bloque, f
         
         print(f"--- DIAGNÓSTICO FLR: Se asignaron {len(flrs_asignados)} bloques de FLR ---")
         
-        return df_resultados, flrs_asignados
+        return df_resultados, flrs_asignados, df_cat_semanas
     elif status == cp_model.UNKNOWN:
         print("TIMEOUT: El motor no pudo encontrar una solución en el tiempo límite.")
         print("Las reglas podrían ser viables, pero la combinación de licencias y demanda hace que el problema sea muy complejo (prueba aumentar el max_time_in_seconds).")
-        return None
+        return None, None, None
     else:
         print("INVIABLE: Imposibilidad matemática demostrada. Las reglas, licencias y demandas entran en un conflicto lógico imposible de resolver.")
-        return None, None
+        return None, None, None
 
 def main():
     # --- BASE DE DATOS: inicializar y cargar licencias ---
@@ -147,9 +159,7 @@ def main():
     database.init_licencias()
     print(f"Licencias cargadas desde BD: {sum(len(v) for v in database.LAR.values())} LAR, {sum(len(v) for v in database.LPP.values())} LPP")
 
-    df_personal = pd.DataFrame(PERSONAL)
-
-    database.sincronizar_personal(df_personal)
+    df_personal = pd.DataFrame(database.obtener_personal_db(SERVICIO_ID))
     df_personal = database.cargar_datos_personales_bd(df_personal)
 
     # Cargar acumulados históricos desde la BD (todo anterior a FECHA_INICIO)
@@ -209,7 +219,7 @@ def main():
     # Cargar historial de guardias previas (ultimos 7 dias antes de inicio)
     historial_semana_previa = database.cargar_guardias_previas(FECHA_INICIO, dias_atras=7)
 
-    modelo, turnos, flr_tracker = construir_modelo(
+    modelo, turnos, flr_tracker, vars_turno_sem = construir_modelo(
         df_personal, config_turnos, metadata_turnos, demanda_req, ajustes_db,
         DIAS_DEL_BLOQUE, feriados_indices, offset_dia, num_semanas,
         reglas_personal=reglas_personal_db,
@@ -218,7 +228,7 @@ def main():
         servicio_id=SERVICIO_ID
     )
 
-    df_resultados, flrs_asignados = resolver_modelo(modelo, turnos, flr_tracker, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos)
+    df_resultados, flrs_asignados, df_cat_semanas = resolver_modelo(modelo, turnos, flr_tracker, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos, vars_turno_sem=vars_turno_sem)
 
     if df_resultados is not None:
         if SERVICIO_ID == 1:
@@ -226,7 +236,7 @@ def main():
             reporte.generar_y_exportar(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos, num_semanas)
         elif SERVICIO_ID == 2:
             import reportes.enfermeria as reporte
-            reporte.generar_y_exportar(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos, num_semanas, flrs_asignados=flrs_asignados)
+            reporte.generar_y_exportar(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos, num_semanas, flrs_asignados=flrs_asignados, df_cat_semanas=df_cat_semanas)
         else:
             print(f"[WARNING] No hay un reporte de Excel configurado para el SERVICIO_ID {SERVICIO_ID}")
 

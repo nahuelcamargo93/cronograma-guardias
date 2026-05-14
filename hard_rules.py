@@ -407,28 +407,8 @@ def aplicar_reglas_duras(modelo, turnos, df_personal, demanda_turnos, metadata_t
                         limite_semanal = params.get('limite', limite_horas_global) if isinstance(params, dict) else limite_horas_global
                         modelo.Add(sum(horas_semanales) + horas_previas <= limite_semanal)
 
-    # 6. DESCANSO POST-NOCHE (Legacy)
-    if DEBUG_DISABLE_DESCANSO_NOCHE:
-        if DEBUG_LOGS: print("[DESCANSO NOCHE] Restriccion descanso post-noche DESACTIVADA (DEBUG_DISABLE_DESCANSO_NOCHE=True)")
-    else:
-        for index, persona in df_personal.iterrows():
-            nombre = persona['Nombre']
-            for d in range(dias_del_bloque - 1):
-                if (nombre, d, "Noche") in turnos:
-                    fecha_d = (fecha_inicio_dt + timedelta(days=d)).isoformat()
-                    params = _re.resolver_parametros_regla(
-                        'DESC_POST_NOCHE', nombre, fecha_d,
-                        reglas_servicio, reglas_personal, ajustes_reglas_personal
-                    )
-                    if not _re.regla_existe(params):
-                        continue  # suspendida para esta persona/fecha
-                    horas_descanso = params.get('horas', 24) if isinstance(params, dict) else 24
-                    if horas_descanso >= 24:
-                        siguiente_dia_es_f = ((d+1 + offset_dia) % 7) >= 5 or (d+1 in feriados)
-                        td_sig = "Finde_Feriado" if siguiente_dia_es_f else "Semana"
-                        siguiente_dia = [turnos[(nombre, d+1, t)] for t in demanda_turnos.get(td_sig, {}).keys() if (nombre, d+1, t) in turnos]
-                        for t_sig in siguiente_dia:
-                            modelo.AddImplication(turnos[(nombre, d, "Noche")], t_sig.Not())
+    # 6. DESCANSO POST-NOCHE (Obsoleto - Migrado a regla 167)
+    pass
 
     # 6b. DESCANSO ENTRE TURNOS (General)
     for index, persona in df_personal.iterrows():
@@ -442,31 +422,45 @@ def aplicar_reglas_duras(modelo, turnos, df_personal, demanda_turnos, metadata_t
             if not _re.regla_existe(params_rest):
                 continue
             
-            min_descanso = params_rest.get('horas', 12) if isinstance(params_rest, dict) else 12
-            
+            # Formato nuevo: {"por_turno": {"G": 48, "D": 24}}
+            config_descanso = params_rest.get('por_turno')
+
             # Turnos hoy
             es_f_hoy = ((d + offset_dia) % 7) >= 5 or d in feriados
             tipo_dia_hoy = "Finde_Feriado" if es_f_hoy else "Semana"
             turnos_hoy_nombres = [t for t in demanda_turnos.get(tipo_dia_hoy, {}).keys() if (nombre, d, t) in turnos]
             
-            # Turnos mañana
-            es_f_man = ((d+1 + offset_dia) % 7) >= 5 or (d+1 in feriados)
-            tipo_dia_man = "Finde_Feriado" if es_f_man else "Semana"
-            turnos_man_nombres = [t for t in demanda_turnos.get(tipo_dia_man, {}).keys() if (nombre, d+1, t) in turnos]
-            
             for t1 in turnos_hoy_nombres:
                 t1_info = metadata_turnos.get(t1)
                 if not t1_info: continue
+                
+                min_descanso = None
+                if config_descanso:
+                    for key, value in config_descanso.items():
+                        if key in t1: # Bsqueda parcial (ej: "G" en "G_Planta")
+                            min_descanso = value
+                            break
+                
+                if min_descanso is None:
+                    raise ValueError(f"❌ ERROR: El turno '{t1}' no tiene configurado el descanso en la regla DESCANSO_ENTRE_TURNOS (Servicio {servicio_id}).")
+
                 t1_start = time_to_float(t1_info["hora_inicio"])
                 t1_end = t1_start + t1_info["horas"]
                 
-                for t2 in turnos_man_nombres:
-                    t2_info = metadata_turnos.get(t2)
-                    if not t2_info: continue
-                    t2_start = 24 + time_to_float(t2_info["hora_inicio"])
+                # Revisar das a futuro (ej: si son 48hs, hay que ver d+1 y d+2)
+                max_dias_futuro = math.ceil(min_descanso / 24) + 1
+                for d_fut in range(d + 1, min(d + max_dias_futuro, dias_del_bloque)):
+                    es_f_fut = ((d_fut + offset_dia) % 7) >= 5 or (d_fut in feriados)
+                    tipo_dia_fut = "Finde_Feriado" if es_f_fut else "Semana"
+                    turnos_man_nombres = [t for t in demanda_turnos.get(tipo_dia_fut, {}).keys() if (nombre, d_fut, t) in turnos]
                     
-                    if t2_start - t1_end < min_descanso - 0.01:
-                        modelo.Add(turnos[(nombre, d, t1)] + turnos[(nombre, d+1, t2)] <= 1)
+                    for t2 in turnos_man_nombres:
+                        t2_info = metadata_turnos.get(t2)
+                        if not t2_info: continue
+                        t2_start = (d_fut - d) * 24 + time_to_float(t2_info["hora_inicio"])
+                        
+                        if t2_start - t1_end < min_descanso - 0.01:
+                            modelo.Add(turnos[(nombre, d, t1)] + turnos[(nombre, d_fut, t2)] <= 1)
                         
 
     # 7. UN SOLO TURNO POR DÍA

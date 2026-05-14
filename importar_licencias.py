@@ -9,7 +9,7 @@ Columnas de la tabla: Persona | Tipo | Fecha_inicio | Fecha_fin
 """
 
 import db as database
-from data import PERSONAL
+from data import SERVICIO_ID
 
 # ---------------------------------------------------------------------------
 # Datos adicionales que NO estaban en data.py (podés agregar acá antes de correr)
@@ -24,7 +24,8 @@ LICENCIAS_EXTRA = [
 def importar():
     database.inicializar_db()
 
-    nombres_validos = {p["Nombre"] for p in PERSONAL}
+    personal = database.obtener_personal_db(SERVICIO_ID)
+    nombres_validos = {p["Nombre"] for p in personal}
     insertadas = 0
     errores = 0
 

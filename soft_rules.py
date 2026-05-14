@@ -4,7 +4,7 @@ import db as _db
 
 def _get_licencias(): return _db.LAR, _db.LPP
 
-def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=1, flr_tracker=None, historial_semana_previa=None):
+def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=1, flr_tracker=None, historial_semana_previa=None, metadata_turnos=None):
     # Cargar el motor de reglas desde la BD
     reglas_servicio = _db.cargar_reglas_servicio(servicio_id)
     reglas_personal = _db.cargar_reglas_personal(servicio_id)
@@ -52,8 +52,12 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
     puntos_mix_horario = []
     puntos_inconsistencia = []
     puntos_preferencias = []
-    puntos_transicion_semana = []
     semanas_seg_totales = []
+    penalizaciones_ad_hoc = []
+    puntos_objetivo_rotacion = []
+    puntos_diversidad = []
+    puntos_bonus = []
+    global_vars_turno_sem = {}
     
     mapa_dias = {"Lunes": 0, "Martes": 1, "Miercoles": 2, "Jueves": 3, "Viernes": 4, "Sabado": 5, "Domingo": 6}
 
@@ -89,6 +93,19 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
         nombre = persona['Nombre']
         rol = persona['Rol']
         dias_bloqueados_persona = get_dias_bloqueados_soft(nombre)
+        
+        # Penalización dinámica por turno (vía DB)
+        params_penal_turno = rule_engine.resolver_parametros_regla('PENALIZACION_TURNO', nombre, FECHA_INICIO, reglas_servicio, reglas_personal, ajustes_personal)
+        if rule_engine.regla_existe(params_penal_turno):
+            items = params_penal_turno if isinstance(params_penal_turno, list) else [params_penal_turno]
+            for item in items:
+                t_a_penalizar = item.get('turno')
+                peso = item.get('peso', 100)
+                if t_a_penalizar:
+                    for d in range(dias_del_bloque):
+                        if (nombre, d, t_a_penalizar) in turnos:
+                            penalizaciones_ad_hoc.append(turnos[(nombre, d, t_a_penalizar)] * peso)
+
         horas_mes = []
         semanas_seg_persona = []
         
@@ -145,11 +162,55 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
                     findes_trabajados_actual.append(traba_este_finde)
                     findes_trab_por_mes_cal[mes_s_key].append(traba_este_finde)
 
+        # Pre-crear variables de tipo de turno por semana para esta persona
+        vars_turno_sem = {}
+        for s_key in dias_por_semana_calendario.keys():
+            s_id = s_key.replace("-", "_")
+            v_dict = {
+                'M': modelo.NewBoolVar(f'is_M_{nombre}_{s_id}'),
+                'T': modelo.NewBoolVar(f'is_T_{nombre}_{s_id}'),
+                'TN': modelo.NewBoolVar(f'is_TN_{nombre}_{s_id}'),
+                'N': modelo.NewBoolVar(f'is_N_{nombre}_{s_id}')
+            }
+            vars_turno_sem[s_key] = v_dict
+            global_vars_turno_sem[(nombre, s_key)] = v_dict
+
+        for sem_key, dias_semana_actual in dias_por_semana_calendario.items():
+            sem_id = sem_key.replace("-", "_")
+            lunes_semana_dt = date.fromisoformat(sem_key)
+            lunes_a_viernes = [d for d in dias_semana_actual if ((d + offset_dia) % 7) < 5]
+            
+            # --- LÓGICA DE FINES DE SEMANA HÁBILES Y TRABAJADOS ---
+            sabados = [d for d in dias_semana_actual if ((d + offset_dia) % 7) == 5]
+            domingos = [d for d in dias_semana_actual if ((d + offset_dia) % 7) == 6]
+            
+            if sabados and domingos:
+                s = sabados[0]
+                dom = domingos[0]
+                fecha_s = fecha_inicio_dt + timedelta(days=s)
+                mes_s_key = f"{fecha_s.year}-{fecha_s.month:02d}"
+                
+                # Un fin de semana es hábil si no hay licencia ni sábado ni domingo
+                if s not in dias_bloqueados_persona and dom not in dias_bloqueados_persona:
+                    findes_habiles_actual += 1
+                    findes_hab_por_mes_cal[mes_s_key] += 1
+                
+                # Variable binaria: ¿trabaja este fin de semana? (Cualquier turno en S o D)
+                traba_este_finde = modelo.NewBoolVar(f'traba_finde_{nombre}_{sem_id}')
+                t_f_names = demanda_turnos.get("Finde_Feriado", {}).keys()
+                turnos_finde_v = [turnos[(nombre, s, t)] for t in t_f_names if (nombre, s, t) in turnos] + \
+                                 [turnos[(nombre, dom, t)] for t in t_f_names if (nombre, dom, t) in turnos]
+                
+                if turnos_finde_v:
+                    modelo.AddMaxEquality(traba_este_finde, turnos_finde_v)
+                    findes_trabajados_actual.append(traba_este_finde)
+                    findes_trab_por_mes_cal[mes_s_key].append(traba_este_finde)
+
             # --- LÓGICA DE CONSISTENCIA DE TURNOS EN LA SEMANA (MIX HORARIO) ---
-            is_M = modelo.NewBoolVar(f'is_M_{nombre}_{sem_id}')
-            is_T = modelo.NewBoolVar(f'is_T_{nombre}_{sem_id}')
-            is_TN = modelo.NewBoolVar(f'is_TN_{nombre}_{sem_id}')
-            is_N = modelo.NewBoolVar(f'is_N_{nombre}_{sem_id}')
+            is_M = vars_turno_sem[sem_key]['M']
+            is_T = vars_turno_sem[sem_key]['T']
+            is_TN = vars_turno_sem[sem_key]['TN']
+            is_N = vars_turno_sem[sem_key]['N']
             
             # --- Integrar historial para consistencia con el mes anterior ---
             if historial_semana_previa and nombre in historial_semana_previa:
@@ -189,62 +250,19 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
                     tiene_turnos_semana = True
                     
             if tiene_turnos_semana:
-                sum_is = modelo.NewIntVar(0, 4, f'sum_is_{nombre}_{sem_id}')
-                modelo.Add(sum_is == is_M + is_T + is_TN + is_N)
-                
-                mix_penalty = modelo.NewIntVar(0, 3, f'mix_penalty_{nombre}_{sem_id}')
-                modelo.Add(mix_penalty >= sum_is - 1)
-                modelo.Add(mix_penalty >= 0)
-                
-                puntos_mix_horario.append(mix_penalty)
+                # REGLA DURA: Una semana solo puede ser de un tipo (M, T, TN o N)
+                modelo.Add(is_M + is_T + is_TN + is_N <= 1)
                 
                 semanas_M_persona.append(is_M)
                 semanas_T_persona.append(is_T)
                 semanas_TN_persona.append(is_TN)
                 semanas_N_persona.append(is_N)
 
-            # --- NUEVA LÓGICA: Consistencia entre el fin de esta semana y el inicio de la siguiente ---
-            proxima_semana_key = (lunes_semana_dt + timedelta(days=7)).isoformat()
-            if proxima_semana_key in dias_por_semana_calendario:
-                dias_prox_sem = dias_por_semana_calendario[proxima_semana_key]
-                if dias_semana_actual and dias_prox_sem:
-                    ultimo_d = dias_semana_actual[-1]
-                    primer_d_prox = dias_prox_sem[0]
-                    # Solo penalizamos si el cambio es entre el Domingo y el Lunes
-                    if (ultimo_d + offset_dia) % 7 == 6 and (primer_d_prox + offset_dia) % 7 == 0:
-                        # Si trabajó un turno el domingo, preferimos que el lunes siga en el mismo "ritmo"
-                        # Para simplificar, usamos las variables is_M, is_T, etc. de ambas semanas
-                        prox_sem_id = proxima_semana_key.replace("-", "_")
-                        is_M_prox = modelo.NewBoolVar(f'is_M_{nombre}_{prox_sem_id}')
-                        is_T_prox = modelo.NewBoolVar(f'is_T_{nombre}_{prox_sem_id}')
-                        is_TN_prox = modelo.NewBoolVar(f'is_TN_{nombre}_{prox_sem_id}')
-                        is_N_prox = modelo.NewBoolVar(f'is_N_{nombre}_{prox_sem_id}')
                         
-                        # Penalizamos si (is_M y no is_M_prox) o viceversa, etc.
-                        # Pero solo si trabajaron en AMBAS semanas.
-                        cambio_turno = modelo.NewBoolVar(f'cambio_turno_sem_{nombre}_{sem_id}')
-                        # Si (is_M != is_M_prox) -> cambio
-                        # Usamos una lógica simplificada: si is_M es 1, queremos que is_M_prox sea 1.
-                        # Si is_M es 1 e is_M_prox es 0 -> penalización.
-                        m_cambia = modelo.NewBoolVar(f'm_cambia_{nombre}_{sem_id}')
-                        modelo.Add(is_M - is_M_prox <= m_cambia)
-                        modelo.Add(is_M_prox - is_M <= m_cambia)
                         
-                        t_cambia = modelo.NewBoolVar(f't_cambia_{nombre}_{sem_id}')
-                        modelo.Add(is_T - is_T_prox <= t_cambia)
-                        modelo.Add(is_T_prox - is_T <= t_cambia)
 
-                        tn_cambia = modelo.NewBoolVar(f'tn_cambia_{nombre}_{sem_id}')
-                        modelo.Add(is_TN - is_TN_prox <= tn_cambia)
-                        modelo.Add(is_TN_prox - is_TN <= tn_cambia)
 
-                        n_cambia = modelo.NewBoolVar(f'n_cambia_{nombre}_{sem_id}')
-                        modelo.Add(is_N - is_N_prox <= n_cambia)
-                        modelo.Add(is_N_prox - is_N <= n_cambia)
 
-                        # Si ALGUNO cambia, sumamos a puntos de transición
-                        # Usamos un peso menor que el mix horario para permitir rotación semanal si es necesario por equidad
-                        puntos_transicion_semana.extend([m_cambia, t_cambia, tn_cambia, n_cambia])
 
             # Puntos de seguimiento "blandos" (como en el original)
             turnos_a_evaluar = ["Mañana_UTI", "Mañana_UCO"] if rol in ["Jefe", "Coordinador"] else list(demanda_turnos.get("Semana", {}).keys())
@@ -478,8 +496,20 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
             'FINDE_LARGO_REGLAMENTARIO', nombre, FECHA_INICIO,
             reglas_servicio, reglas_personal, ajustes_personal
         )
+        params_flr_estricto = rule_engine.resolver_parametros_regla(
+            'FINDE_LARGO_REGLAMENTARIO_ESTRICTO', nombre, FECHA_INICIO,
+            reglas_servicio, reglas_personal, ajustes_personal
+        )
+
+        active_flr_rule = None
         if not rule_engine.regla_suspendida(params_flr):
-            cantidad_requerida = params_flr.get('cantidad', 1) if isinstance(params_flr, dict) else 1
+            active_flr_rule = ('normal', params_flr)
+        elif not rule_engine.regla_suspendida(params_flr_estricto):
+            active_flr_rule = ('estricto', params_flr_estricto)
+
+        if active_flr_rule:
+            tipo_regla, params = active_flr_rule
+            cantidad_requerida = params.get('cantidad', 1) if isinstance(params, dict) else 1
             flr_vars_persona_pref = []
             flr_vars_persona_alt = []
             
@@ -489,20 +519,58 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
                 es_jueves = (dia_semana == 3)
                 
                 if es_sabado or es_jueves:
+                    # Si la regla es ESTRICTA, los 4 días deben estar dentro del bloque
+                    if tipo_regla == 'estricto' and d + 3 >= dias_del_bloque:
+                        continue
+
+                    # Verificar si los 4 días están disponibles (sin licencias que rompan el bloque)
+                    dias_objetivo = [d, d+1, d+2, d+3]
                     turnos_en_bloque = []
-                    for delta in range(4):
-                        dia_eval = d + delta
-                        if dia_eval < dias_del_bloque and dia_eval not in dias_bloqueados_persona:
-                            es_f_e = ((dia_eval + offset_dia) % 7) >= 5 or dia_eval in feriados
+                    for d_eval in dias_objetivo:
+                        if d_eval < dias_del_bloque:
+                            if d_eval in dias_bloqueados_persona:
+                                turnos_en_bloque = []
+                                break
+                            es_f_e = ((d_eval + offset_dia) % 7) >= 5 or d_eval in feriados
                             tipo_dia_e = "Finde_Feriado" if es_f_e else "Semana"
                             for t in demanda_turnos.get(tipo_dia_e, {}).keys():
-                                if (nombre, dia_eval, t) in turnos:
-                                    turnos_en_bloque.append(turnos[(nombre, dia_eval, t)])
+                                if (nombre, d_eval, t) in turnos:
+                                    turnos_en_bloque.append(turnos[(nombre, d_eval, t)])
+                        else:
+                            if tipo_regla == 'estricto':
+                                turnos_en_bloque = []
+                                break
                     
                     if turnos_en_bloque:
                         tipo_str = "pref" if es_sabado else "alt"
                         tiene_flr = modelo.NewBoolVar(f'flr_{tipo_str}_{nombre}_d{d}')
                         modelo.Add(sum(turnos_en_bloque) == 0).OnlyEnforceIf(tiene_flr)
+                        
+                        # --- REGLA DURA ADYACENTE AL FLR: No francos antes ni después ---
+                        # Si tiene FLR (4 días libres), DEBE trabajar el día anterior y posterior.
+                        # Esto evita bloques de 5 o más días libres seguidos.
+
+                        # Día anterior (d-1)
+                        if d - 1 >= 0:
+                            es_f_prev = ((d - 1 + offset_dia) % 7) >= 5 or (d - 1 in feriados)
+                            tipo_dia_prev = "Finde_Feriado" if es_f_prev else "Semana"
+                            vars_prev = [turnos[(nombre, d - 1, t)] for t in demanda_turnos.get(tipo_dia_prev, {}).keys() if (nombre, d - 1, t) in turnos]
+                            if vars_prev:
+                                # Obligar a trabajar (sum == 1) si tiene FLR
+                                modelo.Add(sum(vars_prev) == 1).OnlyEnforceIf(tiene_flr)
+                            else:
+                                # Si no hay turnos posibles (licencia), no puede haber FLR aquí
+                                modelo.Add(tiene_flr == 0)
+                        
+                        # Día posterior (d+4)
+                        if d + 4 < dias_del_bloque:
+                            es_f_post = ((d + 4 + offset_dia) % 7) >= 5 or (d + 4 in feriados)
+                            tipo_dia_post = "Finde_Feriado" if es_f_post else "Semana"
+                            vars_post = [turnos[(nombre, d + 4, t)] for t in demanda_turnos.get(tipo_dia_post, {}).keys() if (nombre, d + 4, t) in turnos]
+                            if vars_post:
+                                modelo.Add(sum(vars_post) == 1).OnlyEnforceIf(tiene_flr)
+                            else:
+                                modelo.Add(tiene_flr == 0)
                         
                         if es_sabado:
                             flr_vars_persona_pref.append(tiene_flr)
@@ -589,6 +657,77 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
         if not rule_engine.regla_suspendida(params_fl4):
             modelo.Add(total_fl4 <= max_fl4)
             modelo.Add(total_fl4 >= min_fl4)
+            
+        # --- Objetivo de Rotación Mensual Individual ---
+        params_rot = rule_engine.resolver_parametros_regla('OBJETIVO_ROTACION_MENSUAL', nombre, FECHA_INICIO, reglas_servicio, reglas_personal, ajustes_personal)
+        if rule_engine.regla_existe(params_rot) and not rule_engine.regla_suspendida(params_rot):
+            objetivos = params_rot.get('objetivos', {})
+            peso_rot = params_rot.get('peso', 100)
+            mapping = {'M': semanas_M_persona, 'T': semanas_T_persona, 'TN': semanas_TN_persona, 'N': semanas_N_persona}
+            for t_code, sem_vars in mapping.items():
+                if t_code in objetivos and sem_vars:
+                    target = objetivos[t_code]
+                    total_t = sum(sem_vars)
+                    diff = modelo.NewIntVar(0, 10, f'diff_rot_{t_code}_{nombre}')
+                    modelo.AddAbsEquality(diff, total_t - target)
+                    puntos_objetivo_rotacion.append(diff * peso_rot)
+                    
+        # --- Penalización por Turno Ausente (Diversidad Semanal) ---
+        params_div = rule_engine.resolver_parametros_regla('PENALIZACION_TURNO_AUSENTE', nombre, FECHA_INICIO, reglas_servicio, reglas_personal, ajustes_personal)
+        if rule_engine.regla_existe(params_div) and not rule_engine.regla_suspendida(params_div):
+            peso_div = params_div.get('peso', 500)
+            mapping_div = {'M': semanas_M_persona, 'T': semanas_T_persona, 'TN': semanas_TN_persona, 'N': semanas_N_persona}
+            for t_code, sem_vars in mapping_div.items():
+                if sem_vars:
+                    is_missing = modelo.NewBoolVar(f'missing_{t_code}_{nombre}')
+                    modelo.Add(sum(sem_vars) == 0).OnlyEnforceIf(is_missing)
+                    modelo.Add(sum(sem_vars) >= 1).OnlyEnforceIf(is_missing.Not())
+                    puntos_diversidad.append(is_missing * peso_div)
+
+        # --- BONUS POR CARGA PERFECTA ---
+        params_bonus = rule_engine.resolver_parametros_regla('BONUS_POR_CARGA_PERFECTA', nombre, FECHA_INICIO, reglas_servicio, reglas_personal, ajustes_personal)
+        if rule_engine.regla_existe(params_bonus) and not rule_engine.regla_suspendida(params_bonus) and metadata_turnos:
+            min_h = params_bonus.get('min_h', 142)
+            max_h = params_bonus.get('max_h', 146)
+            bonus_val = params_bonus.get('bonus', 2000)
+            
+            meses_en_bloque = {}
+            fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+            for d in range(dias_del_bloque):
+                m_key = (fecha_inicio_dt + timedelta(days=d)).strftime("%Y-%m")
+                meses_en_bloque.setdefault(m_key, []).append(d)
+            
+            for m_key, dias_m in meses_en_bloque.items():
+                h_vars_m = []
+                for d in dias_m:
+                    es_f = ((d + offset_dia) % 7) >= 5 or d in feriados
+                    tipo_dia_h = "Finde_Feriado" if es_f else "Semana"
+                    for t in demanda_turnos.get(tipo_dia_h, {}).keys():
+                        if (nombre, d, t) in turnos:
+                            h_t = metadata_turnos.get(t, {}).get("horas", 6)
+                            h_vars_m.append(turnos[(nombre, d, t)] * h_t)
+                
+                # Licencias pro-rata
+                dias_lic_m = [d for d in dias_m if d in dias_bloqueados_persona]
+                val_dia = 144.0 / dias_del_bloque
+                h_lic_m = int(val_dia * len(dias_lic_m) + 0.5)
+                
+                total_h_mes_var = modelo.NewIntVar(0, 500, f'h_mes_{nombre}_{m_key}')
+                modelo.Add(total_h_mes_var == sum(h_vars_m) + h_lic_m)
+                
+                b_perfect = modelo.NewBoolVar(f'b_perfect_{nombre}_{m_key}')
+                b_high = modelo.NewBoolVar(f'b_high_{nombre}_{m_key}')
+                b_low = modelo.NewBoolVar(f'b_low_{nombre}_{m_key}')
+                
+                modelo.Add(total_h_mes_var >= min_h).OnlyEnforceIf(b_high)
+                modelo.Add(total_h_mes_var < min_h).OnlyEnforceIf(b_high.Not())
+                modelo.Add(total_h_mes_var <= max_h).OnlyEnforceIf(b_low)
+                modelo.Add(total_h_mes_var > max_h).OnlyEnforceIf(b_low.Not())
+                
+                modelo.AddBoolAnd([b_high, b_low]).OnlyEnforceIf(b_perfect)
+                modelo.AddBoolOr([b_high.Not(), b_low.Not()]).OnlyEnforceIf(b_perfect.Not())
+                
+                puntos_bonus.append(b_perfect * bonus_val)
 
     brecha_mensual = modelo.NewIntVar(0, max_horas_limite, 'brecha_mensual')
     modelo.Add(brecha_mensual == max_horas_mes - min_horas_mes)
@@ -641,14 +780,6 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
     suma_brechas_mes_cal = sum(brechas_mes_cal_vars) * peso_mensual_cal if brechas_mes_cal_vars else 0
     suma_brechas_finde_mes_cal = sum(brechas_finde_mes_cal_vars) * peso_ratio_finde_mes_cal if brechas_finde_mes_cal_vars else 0
 
-    # Penalización a turnos largos (MT, TNN)
-    turnos_largos_vars = []
-    for (nombre, d, t), var in turnos.items():
-        if t in ['MT', 'TNN']:
-            turnos_largos_vars.append(var)
-    
-    peso_turnos_largos = reglas_servicio.get('PESO_TURNOS_LARGOS', {}).get('peso', 50)
-    penalizacion_turnos_largos = sum(turnos_largos_vars) * peso_turnos_largos if turnos_largos_vars else 0
 
     peso_equidad_tipo_turno = reglas_servicio.get('PESO_EQUIDAD_TIPO_TURNO', {}).get('peso', 150)
     brecha_equidad_turnos = (
@@ -676,6 +807,9 @@ def aplicar_reglas_blandas(modelo, turnos, df_personal, demanda_turnos, dias_del
         (sum(puntos_preferencias) * peso_preferencias) +
         (sum(puntos_mix_horario) * peso_mix_horario) +
         (sum(puntos_inconsistencia) * peso_inconsistencia) +
-        (sum(puntos_transicion_semana) * 1000) +
-        penalizacion_turnos_largos
+        sum(penalizaciones_ad_hoc) +
+        sum(puntos_objetivo_rotacion) +
+        sum(puntos_diversidad) - 
+        sum(puntos_bonus)
     )
+    return global_vars_turno_sem

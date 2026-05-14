@@ -77,5 +77,9 @@ def regla_existe(params):
 
 
 def regla_suspendida(params):
-    """True si la regla fue suspendida por un ajuste temporal."""
-    return params is None
+    """True si la regla está suspendida (ya sea por ajuste temporal o por parámetro en el JSON)."""
+    if params is None:
+        return True
+    if isinstance(params, dict) and params.get('suspendida') is True:
+        return True
+    return False
