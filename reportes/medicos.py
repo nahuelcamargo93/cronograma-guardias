@@ -216,7 +216,7 @@ def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, df_resultado
         fmt_total_val = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
         
         # Mapeo de personal a rol
-        rol_map = df_persona.index.to_series().map(df_personal.set_index('Nombre')['rol'])
+        rol_map = df_persona.index.to_series().map(df_personal.set_index('Nombre')['Rol'])
 
         categorias = [
             ("dia planta", "Planta", ["D", "G"]),
