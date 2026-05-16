@@ -9,46 +9,44 @@ LPP = {}
 LM  = {}
 
 def init_licencias():
-    """Carga LAR y LPP desde la BD en los dicts de módulo. Llamar una vez al inicio."""
-    global LAR, LPP
+    """Carga LAR, LPP y LM desde la BD en los dicts de módulo. Llamar una vez al inicio."""
+    global LAR, LPP, LM
     raw = cargar_licencias_db()
-    LAR = {}
-    LPP = {}
+    LAR.clear()
+    LPP.clear()
+    LM.clear()
     for nombre, rangos in raw.items():
         for (tipo, fi, ff) in rangos:
-            if tipo == 'LAR':
+            tipo_up = tipo.upper()
+            if tipo_up == 'LAR':
                 LAR.setdefault(nombre, []).append((fi, ff))
-            elif tipo == 'LPP':
+            elif tipo_up == 'LPP':
                 LPP.setdefault(nombre, []).append((fi, ff))
-            elif tipo == 'LM':
+            elif tipo_up == 'LM':
                 LM.setdefault(nombre, []).append((fi, ff))
                 
-    # Cargar FLRs asignados como LAR para que sean intocables
-    with get_connection() as conn:
-        try:
-            flrs = conn.execute("SELECT nombre, fecha_inicio, fecha_fin FROM flr_asignados").fetchall()
-            for nombre, fi, ff in flrs:
-                LAR.setdefault(nombre, []).append((fi, ff))
-        except sqlite3.OperationalError:
-            pass # Si la tabla aun no existe
+    # (Se eliminó la carga automática de FLRs aquí para evitar bloqueos en re-ejecuciones)
+    pass
 
 
 def cargar_datos_personales_bd(df_personal):
-    """Agrega las columnas de la BD (cumpleaños, es_madre, es_padre, régimen) al DataFrame de personal en memoria."""
+    """Agrega las columnas de la BD (cumpleaños, es_madre, es_padre, régimen, horas reglamentarias) al DataFrame de personal en memoria."""
     with get_connection() as conn:
-        rows = conn.execute("SELECT nombre, fecha_cumpleanos, es_madre, es_padre, regimen_trabajo FROM personal").fetchall()
+        rows = conn.execute("SELECT nombre, fecha_cumpleanos, es_madre, es_padre, regimen_trabajo, horas_mensuales_reglamentarias FROM personal").fetchall()
         
     info = {r[0]: {
         'fecha_cumpleanos': r[1], 
         'es_madre': r[2], 
         'es_padre': r[3],
-        'regimen_trabajo': r[4]
+        'regimen_trabajo': r[4],
+        'horas_mensuales_reglamentarias': r[5]
     } for r in rows}
     
     df_personal['fecha_cumpleanos'] = df_personal['Nombre'].map(lambda n: info.get(n, {}).get('fecha_cumpleanos'))
     df_personal['es_madre'] = df_personal['Nombre'].map(lambda n: info.get(n, {}).get('es_madre', 0))
     df_personal['es_padre'] = df_personal['Nombre'].map(lambda n: info.get(n, {}).get('es_padre', 0))
     df_personal['regimen_trabajo'] = df_personal['Nombre'].map(lambda n: info.get(n, {}).get('regimen_trabajo'))
+    df_personal['horas_mensuales_reglamentarias'] = df_personal['Nombre'].map(lambda n: info.get(n, {}).get('horas_mensuales_reglamentarias'))
     return df_personal
 
 def obtener_personal_db(servicio_id):
@@ -114,6 +112,14 @@ def cargar_historial(df_personal, fecha_corte_str):
             GROUP BY nombre
         """, (fecha_corte_str,)).fetchall())
 
+        # Fecha de inicio de historial por persona
+        fecha_ini_map = dict(conn.execute("""
+            SELECT nombre, MIN(fecha)
+            FROM guardias
+            WHERE fecha < ?
+            GROUP BY nombre
+        """, (fecha_corte_str,)).fetchall())
+
         # Total de semanas en período histórico (para Findes_Habiles aproximado)
         total_semanas_hist = conn.execute("""
             SELECT COUNT(DISTINCT strftime('%Y-%W', fecha))
@@ -154,6 +160,7 @@ def cargar_historial(df_personal, fecha_corte_str):
             'Findes_Habiles_Previos':  total_semanas_hist,  # aprox: mismas semanas para todos
             'Findes_Largos_3_Previos': fl3_trab.get(nombre, 0),
             'Findes_Largos_4_Previos': fl4_trab.get(nombre, 0),
+            'Fecha_Inicio_Historial':  fecha_ini_map.get(nombre),
         }
     return resultado
 
@@ -223,7 +230,7 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
         for _, row in df_resultados.iterrows():
             fecha = row['Fecha']
             turno = row['Turno']
-            nombre = row['Kinesiologo']
+            nombre = row['Personal']
             horas = 12 if (turno.startswith('Noche') or turno.startswith('Dia')) else 6
             d = (date.fromisoformat(fecha) - fecha_inicio_dt).days
             es_finde = 1 if d in finde_indices else 0
@@ -237,17 +244,14 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
     return cronograma_id
 
 def guardar_flrs_asignados(cronograma_id, flrs_asignados):
-    """
-    Guarda los FLRs asignados intencionalmente por el solver.
-    flrs_asignados es una lista de dicts: [{'nombre': 'Juan', 'fecha_inicio': '2026-05-30', 'fecha_fin': '2026-06-02'}, ...]
-    """
+    if not flrs_asignados: return
     with get_connection() as conn:
-        for flr in flrs_asignados:
+        for f in flrs_asignados:
             conn.execute("""
                 INSERT INTO flr_asignados (cronograma_id, nombre, fecha_inicio, fecha_fin)
                 VALUES (?, ?, ?, ?)
-            """, (cronograma_id, flr['nombre'], flr['fecha_inicio'], flr['fecha_fin']))
-    print(f"✅ {len(flrs_asignados)} FLRs asignados guardados en BD.")
+            """, (cronograma_id, f['nombre'], f['fecha_inicio'], f['fecha_fin']))
+    print(f"[OK] {len(flrs_asignados)} FLRs asignados guardados en BD.")
 
 
 

@@ -2,7 +2,7 @@ import pandas as pd
 import datetime
 from datetime import date, timedelta
 from ortools.sat.python import cp_model
-from data import asignar_horas, FECHA_INICIO, FECHA_FIN, FERIADOS, SERVICIO_ID
+from data import FECHA_INICIO, FECHA_FIN, FERIADOS, SERVICIO_ID
 from hard_rules import aplicar_reglas_duras
 from soft_rules import aplicar_reglas_blandas
 from database import queries as db_queries
@@ -56,7 +56,7 @@ def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajuste
                             turno_config = asig['Turno'].replace(" ", "_")
                             vars_coincidentes = [
                                 turnos[(nombre, dia, t)] for t in lista_turnos
-                                if (t == turno_config or t.startswith(turno_config + "_"))
+                                if (nombre, dia, t) in turnos and (t == turno_config or t.startswith(turno_config + "_"))
                             ]
                             if vars_coincidentes:
                                 modelo.Add(sum(vars_coincidentes) == 1)
@@ -107,7 +107,7 @@ def resolver_modelo(modelo, turnos, flr_tracker, empleados, dias_del_bloque, fer
                             "Fecha": fecha_actual.strftime("%Y-%m-%d"),
                             "Dia_Semana": dia_semana,
                             "Turno": t,
-                            "Kinesiologo": nombre
+                            "Personal": nombre
                         })
 
         df_resultados = pd.DataFrame(resultados)
@@ -144,24 +144,23 @@ def resolver_modelo(modelo, turnos, flr_tracker, empleados, dias_del_bloque, fer
         print("INVIABLE: Imposibilidad matemática demostrada.")
         return None, None, None
 
-def main():
+def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas=""):
     # --- BASE DE DATOS: inicializar y cargar licencias ---
     db_schema.inicializar_db()
     db_queries.init_licencias()
-    print(f"Licencias cargadas desde BD: {sum(len(v) for v in db_queries.LAR.values())} LAR, {sum(len(v) for v in db_queries.LPP.values())} LPP")
-
-    # VALIDACIÓN DEL RANGO DE FECHAS
-    fecha_inicio_dt = datetime.datetime.strptime(FECHA_INICIO, "%Y-%m-%d")
-    fecha_fin_dt    = datetime.datetime.strptime(FECHA_FIN,    "%Y-%m-%d")
+    
+    fecha_inicio_dt = datetime.datetime.strptime(fecha_inicio, "%Y-%m-%d")
+    fecha_fin_dt    = datetime.datetime.strptime(fecha_fin,    "%Y-%m-%d")
+    
     if fecha_fin_dt < fecha_inicio_dt:
-        raise ValueError(f"Error: FECHA_FIN ({FECHA_FIN}) es anterior a FECHA_INICIO ({FECHA_INICIO}).")
+        return {"error": f"Error: fecha_fin ({fecha_fin}) es anterior a fecha_inicio ({fecha_inicio})."}
+        
     total_dias = (fecha_fin_dt - fecha_inicio_dt).days + 1
     DIAS_DEL_BLOQUE = total_dias
     num_semanas     = (DIAS_DEL_BLOQUE + 6) // 7
 
-    print(f"Periodo: {FECHA_INICIO} -> {FECHA_FIN} ({num_semanas} semanas aprox / {DIAS_DEL_BLOQUE} días)")
-
     feriados_indices = []
+    # Usar FERIADOS de data.py por ahora, o pasarlo como arg
     for f_str in FERIADOS:
         f_dt = datetime.datetime.strptime(f_str, "%Y-%m-%d")
         delta = (f_dt - fecha_inicio_dt).days
@@ -170,17 +169,16 @@ def main():
 
     # Cargar configuración y datos vía data_loader
     config_turnos, metadata_turnos_raw, demanda_req, ajustes_db = db_queries.cargar_configuracion_turnos(
-        servicio_id=SERVICIO_ID, fecha_inicio=FECHA_INICIO, fecha_fin=FECHA_FIN
+        servicio_id=servicio_id, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin
     )
-    reglas_servicio_db = db_queries.cargar_reglas_servicio(SERVICIO_ID)
-    ajustes_reglas = db_queries.cargar_ajustes_reglas_personal(FECHA_INICIO, FECHA_FIN)
+    reglas_servicio_db = db_queries.cargar_reglas_servicio(servicio_id)
+    ajustes_reglas = db_queries.cargar_ajustes_reglas_personal(fecha_inicio, fecha_fin)
     
-    empleados = obtener_empleados(SERVICIO_ID, FECHA_INICIO, DIAS_DEL_BLOQUE)
-    turnos_dict = obtener_turnos(SERVICIO_ID)
+    empleados = obtener_empleados(servicio_id, fecha_inicio, DIAS_DEL_BLOQUE)
+    turnos_dict = obtener_turnos(servicio_id)
     
-    historial_semana_previa = db_queries.cargar_guardias_previas(FECHA_INICIO, dias_atras=7)
+    historial_semana_previa = db_queries.cargar_guardias_previas(fecha_inicio, dias_atras=7)
 
-    print("Construyendo el modelo de optimización...")
     offset_dia = fecha_inicio_dt.weekday()
     
     modelo, turnos, flr_tracker, vars_turno_sem = construir_modelo(
@@ -189,43 +187,38 @@ def main():
         reglas_servicio=reglas_servicio_db,
         ajustes_reglas_personal=ajustes_reglas,
         historial_semana_previa=historial_semana_previa,
-        servicio_id=SERVICIO_ID
+        servicio_id=servicio_id
     )
 
     df_resultados, flrs_asignados, df_cat_semanas = resolver_modelo(
         modelo, turnos, flr_tracker, empleados, DIAS_DEL_BLOQUE, feriados_indices, 
-        FECHA_INICIO, offset_dia, config_turnos, vars_turno_sem=vars_turno_sem
+        fecha_inicio, offset_dia, config_turnos, vars_turno_sem=vars_turno_sem
     )
 
     if df_resultados is not None:
-        # Reconstruir df_personal para reportes legacy
         df_personal = pd.DataFrame([vars(e) for e in empleados])
-        # Renombrar campos para compatibilidad con reportes legacy si es necesario
         df_personal = df_personal.rename(columns={'nombre': 'Nombre', 'rol': 'Rol'})
         
-        if SERVICIO_ID == 1:
-            import reportes.kinesiologia as reporte
-            reporte.generar_y_exportar(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos, num_semanas)
-        elif SERVICIO_ID == 2:
-            import reportes.enfermeria as reporte
-            reporte.generar_y_exportar(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos, num_semanas, flrs_asignados=flrs_asignados, df_cat_semanas=df_cat_semanas)
-        elif SERVICIO_ID == 3:
-            import reportes.medicos as reporte
-            reporte.generar_y_exportar(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, FECHA_INICIO, offset_dia, config_turnos, num_semanas)
+        # Guardar en BD automáticamente (para la web)
+        cronograma_id = db_queries.guardar_cronograma(
+            df_resultados, df_personal,
+            fecha_inicio, fecha_fin,
+            feriados_indices, offset_dia, DIAS_DEL_BLOQUE,
+            notas=notas
+        )
+        if flrs_asignados:
+            db_queries.guardar_flrs_asignados(cronograma_id, flrs_asignados)
+            
+        return {"status": "success", "cronograma_id": cronograma_id}
+    else:
+        return {"status": "failed", "error": "Inviable o Timeout"}
 
-        print("\n" + "=" * 55)
-        print("  ¿Aceptar y guardar este cronograma en la base de datos?")
-        print("=" * 55)
-        resp = input("  Respuesta (s/n): ").strip().lower()
-        if resp == 's':
-            cronograma_id = db_queries.guardar_cronograma(
-                df_resultados, df_personal,
-                FECHA_INICIO, FECHA_FIN,
-                feriados_indices, offset_dia, DIAS_DEL_BLOQUE
-            )
-            if flrs_asignados:
-                db_queries.guardar_flrs_asignados(cronograma_id, flrs_asignados)
-            print("\nCronograma guardado.")
+def main():
+    # Mantener el comportamiento de CLI para no romper flujos existentes
+    print(f"Ejecutando modo CLI para Servicio {SERVICIO_ID}...")
+    res = ejecutar_optimizacion(SERVICIO_ID, FECHA_INICIO, FECHA_FIN, notas="Generado via CLI")
+    print(res)
+
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,7 @@
 import pandas as pd
-from datetime import date
+from datetime import date, timedelta
 import db as database
+from reportes.base import BaseReport
 
 def exportar_excel_data_prep(df_resultados, config_turnos):
     # --- PIVOTEAR EL CRONOGRAMA ---
@@ -11,28 +12,20 @@ def exportar_excel_data_prep(df_resultados, config_turnos):
     indices_a_borrar = []
     for idx, row in df_excel.iterrows():
         if row['Turno'] == 'MT':
-            row_m = row.copy()
-            row_m['Turno'] = "M"
-            filas_extra.append(row_m)
-            row_t = row.copy()
-            row_t['Turno'] = "T"
-            filas_extra.append(row_t)
+            row_m = row.copy(); row_m['Turno'] = "M"; filas_extra.append(row_m)
+            row_t = row.copy(); row_t['Turno'] = "T"; filas_extra.append(row_t)
             indices_a_borrar.append(idx)
         elif row['Turno'] == 'TNN':
-            row_tn = row.copy()
-            row_tn['Turno'] = "TN"
-            filas_extra.append(row_tn)
-            
+            row_tn = row.copy(); row_tn['Turno'] = "TN"; filas_extra.append(row_tn)
             # La parte N de un TNN ocurre al día siguiente
-            row_n = row.copy()
-            row_n['Turno'] = "N"
+            row_n = row.copy(); row_n['Turno'] = "N"
             try:
                 curr_date = date.fromisoformat(row_n['Fecha'])
-                from datetime import timedelta
                 row_n['Fecha'] = (curr_date + timedelta(days=1)).isoformat()
                 filas_extra.append(row_n)
             except:
-                filas_extra.append(row_n) # Fallback al mismo día si falla la fecha
+                filas_extra.append(row_n) 
+            indices_a_borrar.append(idx)
             
     df_excel = df_excel.drop(indices_a_borrar)
     if filas_extra:
@@ -41,44 +34,31 @@ def exportar_excel_data_prep(df_resultados, config_turnos):
     fechas_originales = sorted(df_resultados['Fecha'].unique())
     fechas_unicas = sorted(df_excel['Fecha'].unique())
     
-    # Asegurar que solo tomamos fechas dentro del bloque (el TNN el último día puede generar una fecha extra fuera del rango)
     if fechas_originales:
         fecha_limite_exclusiva = (date.fromisoformat(fechas_originales[-1]) + timedelta(days=1)).isoformat()
         fechas_unicas = [f for f in fechas_unicas if f < fecha_limite_exclusiva]
     
-    # Orden cronológico: Noche (00-06) primero, Tarde-Noche (18-00) último
     turnos_ordenados = ["N", "M", "T", "TN"]
-                
     filas_excel = []
-    
-    # Obtener jerarquía (por ahora todos son Rotativos o similar)
-    rows_p = database.get_connection().execute("SELECT nombre, rol FROM personal WHERE servicio_id = 2").fetchall()
-    jerarquia = {n: 1 for n, r in rows_p} # Todos igual por ahora
 
     for turno_label in turnos_ordenados:
         df_turno = df_excel[df_excel['Turno'] == turno_label]
         
-        # Max personas asignadas en este turno en cualquier día
-        max_personas_turno = 0
-        for fecha in fechas_unicas:
-            count = len(df_turno[df_turno['Fecha'] == fecha])
-            if count > max_personas_turno:
-                max_personas_turno = count
-        
-        if max_personas_turno == 0:
-            # Aun si está vacío, el usuario pidió estas filas
-            max_personas_turno = 1
+        # Cálculo de max_personas_turno
+        max_p = 0
+        for f in fechas_unicas:
+            c = len(df_turno[df_turno['Fecha'] == f])
+            if c > max_p: max_p = c
+        max_personas_turno = max(1, max_p)
 
         for i in range(max_personas_turno):
             fila = {"Turno": turno_label}
             for fecha in fechas_unicas:
-                pers_dia = df_turno[df_turno['Fecha'] == fecha].sort_values(
-                    by='Kinesiologo' # Se llama Kinesiologo en df_resultados por ahora (main.py)
-                )['Kinesiologo'].tolist()
+                pers_dia = df_turno[df_turno['Fecha'] == fecha].sort_values(by='Kinesiologo')['Kinesiologo'].tolist()
                 fila[fecha] = pers_dia[i] if i < len(pers_dia) else ""
             filas_excel.append(fila)
 
-    # --- AGREGAR FILAS DE LICENCIAS (LAR / LPP) ---
+    # Filas de Licencias
     filas_excel.append({"Turno": "  "}) 
     fila_lpp = {"Turno": "LPP"}
     fila_lar = {"Turno": "LAR"}
@@ -97,11 +77,9 @@ def exportar_excel_data_prep(df_resultados, config_turnos):
     return df_pivot, fechas_unicas
 
 def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=None):
-    # Obtener todas las fechas y nombres
     fechas = sorted(df_resultados['Fecha'].unique())
     nombres = sorted(df_personal['Nombre'].tolist())
     
-    # Crear un mapa rápido de FLRs por persona
     mapa_flrs = {}
     if flrs_asignados:
         for flr in flrs_asignados:
@@ -109,12 +87,6 @@ def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=Non
             fi = date.fromisoformat(flr['fecha_inicio'])
             ff = date.fromisoformat(flr['fecha_fin'])
             mapa_flrs.setdefault(n, []).append((fi, ff))
-
-    siglas_dias = ["L", "M", "Mi", "J", "V", "S", "D"]
-    
-    def format_fecha(f_str):
-        dt = date.fromisoformat(f_str)
-        return f"{siglas_dias[dt.weekday()]} {dt.day}/{dt.month}"
 
     def asignar_horas_enf(t):
         return 12 if t in ["MT", "TNN"] else 6 if t in ["M", "T", "TN", "N"] else 0
@@ -127,220 +99,98 @@ def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=Non
         dias_licencia = 0
         for fecha in fechas:
             fecha_dt = date.fromisoformat(fecha)
-            # 1. Buscar turno asignado
             asig = df_resultados[(df_resultados['Kinesiologo'] == nombre) & (df_resultados['Fecha'] == fecha)]
             if not asig.empty:
                 t = asig.iloc[0]['Turno']
                 fila[fecha] = t
                 total_horas_efectivas += asignar_horas_enf(t)
             else:
-                # 2. Buscar si es FLR actual
                 es_flr = any(fi <= fecha_dt <= ff for fi, ff in mapa_flrs.get(nombre, []))
-                # 3. Buscar si tiene licencia en esa fecha
                 es_lar = any(date.fromisoformat(fi) <= fecha_dt <= date.fromisoformat(ff) for fi, ff in database.LAR.get(nombre, []))
-                es_lpp = any(date.fromisoformat(fi) <= fecha_dt <= date.fromisoformat(ff) for fi, ff in database.LPP.get(nombre, []))
-                
-                if es_flr:
-                    fila[fecha] = "FLR"
-                elif es_lar: 
-                    fila[fecha] = "LAR"
-                    dias_licencia += 1
-                elif es_lpp: 
-                    fila[fecha] = "LPP"
-                    dias_licencia += 1
-                else: 
-                    fila[fecha] = "F"
-                    total_f += 1
+                es_lpp = any(date.fromisoformat(fi) <= fecha_dt <= date.fromisoformat(ff) for i, f in database.LPP.get(nombre, [])) # Fix index error in logic if any
+                # Re-check lpp/lar logic
+                es_lar = any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in database.LAR.get(nombre, []))
+                es_lpp = any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in database.LPP.get(nombre, []))
+
+                if es_flr: fila[fecha] = "FLR"
+                elif es_lar: fila[fecha] = "LAR"; dias_licencia += 1
+                elif es_lpp: fila[fecha] = "LPP"; dias_licencia += 1
+                else: fila[fecha] = "F"; total_f += 1
         
-        # Cálculo de horas de licencia (regla de 3 simple sobre 144hs)
         dias_periodo = len(fechas)
         horas_licencia = round((144.0 / dias_periodo) * dias_licencia, 1) if dias_periodo > 0 else 0
         
-        fila["Horas Efectivas"] = total_horas_efectivas
-        fila["Horas Licencia"] = horas_licencia
-        fila["Horas Totales"] = total_horas_efectivas + horas_licencia
+        fila["H. Efectivas"] = total_horas_efectivas
+        fila["H. Licencia"] = horas_licencia
+        fila["H. Totales"] = total_horas_efectivas + horas_licencia
         fila["F"] = total_f
         filas.append(fila)
         
     return pd.DataFrame(filas).set_index("Enfermero")
 
-def generar_reporte(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, num_semanas):
-    # Reporte de control de horas
+def generar_reporte_horas(df_resultados):
     df_reporte_horas = df_resultados.copy()
-    # Horas: M, T, TN, N = 6hs | MT, TNN = 12hs
     def asignar_horas_enf(t):
         return 12 if t in ["MT", "TNN"] else 6
-        
     df_reporte_horas['Horas'] = df_reporte_horas['Turno'].apply(asignar_horas_enf)
     horas_por_persona = df_reporte_horas.groupby('Kinesiologo')['Horas'].sum().reset_index()
-    
-    # ... (simplificado para enfermería por ahora, centrado en horas) ...
     reporte_final = horas_por_persona.rename(columns={'Kinesiologo': 'Enfermero', 'Horas': 'Horas Mensuales'})
-    reporte_final = reporte_final.sort_values(by='Horas Mensuales', ascending=False).reset_index(drop=True)
+    return reporte_final.sort_values(by='Horas Mensuales', ascending=False).reset_index(drop=True)
+
+def exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, file_name='Cronograma_Enfermeria_UTI.xlsx'):
+    report = BaseReport(file_name)
     
-    print("\nREPORTE DE CONTROL: HORAS ENFERMERIA")
-    print(reporte_final.to_string())
-    return reporte_final
+    # 1. Cronograma
+    report.generar_cronograma_sheet(df_pivot, fechas_unicas)
+    
+    # 2. Vista por Personal
+    ext_cols = ["H. Efectivas", "H. Licencia", "H. Totales"]
+    tipos_de_semana = ['M', 'T', 'TN', 'N']
+    ext_cols += tipos_de_semana
+    
+    # Agregar conteo de semanas al df_persona antes de pasar al motor
+    for t_label in tipos_de_semana:
+        df_persona[t_label] = 0
+        if df_cat_semanas is not None and not df_cat_semanas.empty:
+            for nombre, row in df_persona.iterrows():
+                conteo = len(df_cat_semanas[(df_cat_semanas['Nombre'] == nombre) & (df_cat_semanas['Categoria'] == t_label)])
+                df_persona.at[nombre, t_label] = conteo
 
-def exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, df_resultados, df_cat_semanas=None, file_name='Cronograma_Enfermeria_UTI.xlsx'):
-    with pd.ExcelWriter(file_name, engine='xlsxwriter') as writer:
-        # --- HOJA 1: CRONOGRAMA POR TURNOS ---
-        df_pivot.to_excel(writer, sheet_name='Cronograma')
-        workbook  = writer.book
-        worksheet = writer.sheets['Cronograma']
+    ws_p, row_end = report.generar_vista_personal_sheet(df_persona, fechas_unicas, extension_columns=ext_cols, label_personal="ENFERMERO")
+    
+    # --- TOTALES POR FRANJA (Específico de enfermería) ---
+    row_end += 1
+    filas_extra = []
+    df_base = df_resultados.copy()
+    for _, r in df_base.iterrows():
+        if r['Turno'] == 'MT':
+            m = r.copy(); m['Turno'] = 'M'; filas_extra.append(m)
+            t = r.copy(); t['Turno'] = 'T'; filas_extra.append(t)
+        elif r['Turno'] == 'TNN':
+            tn = r.copy(); tn['Turno'] = 'TN'; filas_extra.append(tn)
+            n = r.copy(); n['Turno'] = 'N'
+            try: n['Fecha'] = (date.fromisoformat(n['Fecha']) + timedelta(days=1)).isoformat()
+            except: pass
+            filas_extra.append(n)
+        else: filas_extra.append(r)
+    df_desdoblado = pd.DataFrame(filas_extra)
 
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BD', 'border': 1, 'align': 'center'})
-        cell_fmt = workbook.add_format({'text_wrap': True, 'valign': 'top', 'border': 1, 'font_size': 9})
-        
-        colores = {
-            "M": '#EBF1DE', # Verde claro
-            "T": '#FEF2CB', # Amarillo claro
-            "TN": '#DAEEF3', # Azul claro
-            "N": '#E5E0EC'  # Purpura claro
-        }
-
-        worksheet.set_column(0, 0, 15, header_fmt)
-        worksheet.set_column(1, len(fechas_unicas), 15, cell_fmt)
-
-        for i, (turno_label, row) in enumerate(df_pivot.iterrows()):
-            fila_excel = i + 1
-            if turno_label in ["LPP", "LAR"]:
-                fmt = workbook.add_format({'bg_color': '#F2F2F2', 'italic': True, 'text_wrap': True, 'border': 1, 'valign': 'top', 'font_size': 8})
-                altura = 30
-            elif turno_label.strip() == "":
-                fmt = workbook.add_format({'bg_color': '#FFFFFF', 'border': 0})
-                altura = 15
-            else:
-                color = colores.get(turno_label, '#FFFFFF')
-                fmt = workbook.add_format({'bg_color': color, 'text_wrap': True, 'border': 1, 'valign': 'top', 'font_size': 9})
-                altura = 20
-            
-            worksheet.set_row(fila_excel, altura, fmt)
-
-        # --- HOJA 2: VISTA POR PERSONAL (CUSTOMIZADA) ---
-        ws_p = workbook.add_worksheet('Vista por Personal')
-        
-        # Formatos
-        fmt_header_blue = workbook.add_format({'bold': True, 'bg_color': '#BDD7EE', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        fmt_header_blue_sun = workbook.add_format({'bold': True, 'bg_color': '#BDD7EE', 'border': 1, 'right': 5, 'align': 'center', 'valign': 'vcenter'})
-        
-        fmt_header_light = workbook.add_format({'bold': True, 'bg_color': '#DDEBF7', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 9})
-        fmt_header_light_sun = workbook.add_format({'bold': True, 'bg_color': '#DDEBF7', 'border': 1, 'right': 5, 'align': 'center', 'valign': 'vcenter', 'font_size': 9})
-        
-        fmt_name = workbook.add_format({'bold': True, 'bg_color': '#FCE4D6', 'border': 1, 'valign': 'vcenter'})
-        fmt_cell = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 9})
-        fmt_sunday = workbook.add_format({'border': 1, 'right': 5, 'align': 'center', 'valign': 'vcenter', 'font_size': 9}) 
-        
-        fmt_total_label = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'right'})
-        fmt_total_val = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
-        fmt_total_val_sun = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'right': 5, 'align': 'center'})
-
-        # Formatos especiales para F, LAR, LPP
-        fmt_grey = workbook.add_format({'bg_color': '#D9D9D9', 'font_color': '#595959', 'border': 1, 'align': 'center'})
-        fmt_grey_sun = workbook.add_format({'bg_color': '#D9D9D9', 'font_color': '#595959', 'border': 1, 'right': 5, 'align': 'center'})
-        fmt_dark_grey = workbook.add_format({'bg_color': '#A6A6A6', 'font_color': '#FFFFFF', 'bold': True, 'border': 1, 'align': 'center'})
-        fmt_dark_grey_sun = workbook.add_format({'bg_color': '#A6A6A6', 'font_color': '#FFFFFF', 'bold': True, 'border': 1, 'right': 5, 'align': 'center'})
-
-        # Escribir Cabeceras (2 filas)
-        ws_p.write(0, 0, "APELLIDO Y NOMBRE", fmt_header_blue)
-        ws_p.write(1, 0, "", fmt_header_blue)
-        ws_p.set_column(0, 0, 25)
-        
-        siglas_dias = ["L", "M", "Mi", "J", "V", "S", "D"]
+    for turno_count in ["M", "T", "TN", "N"]:
+        ws_p.write(row_end, 0, f"TOTAL {turno_count}", report.styles.total_label)
         for col_idx, fecha in enumerate(fechas_unicas):
-            dt = date.fromisoformat(fecha)
-            sigla = siglas_dias[dt.weekday()]
-            dia_num = f"{dt.day}/{dt.month}"
-            
-            style_h = fmt_header_blue if dt.weekday() != 6 else fmt_header_blue_sun
-            ws_p.write(0, col_idx + 1, sigla, style_h)
-            
-            style_l = fmt_header_light if dt.weekday() != 6 else fmt_header_light_sun
-            ws_p.write(1, col_idx + 1, dia_num, style_l)
-            ws_p.set_column(col_idx + 1, col_idx + 1, 5)
+            count = len(df_desdoblado[(df_desdoblado['Fecha'] == fecha) & (df_desdoblado['Turno'] == turno_count)])
+            is_sep = report._es_fin_de_semana_sep(fecha)
+            ws_p.write(row_end, col_idx + 1, count if count > 0 else 0, report.styles.total_val_week if is_sep else report.styles.total_val)
+        row_end += 1
 
-        # Totales de Horas y Conteos al final
-        col_offset = len(fechas_unicas) + 1
-        ws_p.merge_range(0, col_offset, 1, col_offset, "H. Efectivas", fmt_header_blue)
-        ws_p.merge_range(0, col_offset + 1, 1, col_offset + 1, "H. Licencia", fmt_header_blue)
-        ws_p.merge_range(0, col_offset + 2, 1, col_offset + 2, "H. Totales", fmt_header_blue)
-        
-        # Columnas de categorización de semanas (objetivo de rotación)
-        tipos_de_semana = ['M', 'T', 'TN', 'N']
-        for i, t_label in enumerate(tipos_de_semana):
-            ws_p.merge_range(0, col_offset + 3 + i, 1, col_offset + 3 + i, f"{t_label}", fmt_header_blue)
-        
-        ws_p.set_column(col_offset, col_offset + 2, 10)
-        ws_p.set_column(col_offset + 3, col_offset + 3 + len(tipos_de_semana) - 1, 7)
-
-        # Escribir Datos de Personal
-        fila_excel = 2
-        for nombre, row in df_persona.iterrows():
-            ws_p.write(fila_excel, 0, nombre, fmt_name)
-            for col_idx, fecha in enumerate(fechas_unicas):
-                val = row[fecha]
-                dt = date.fromisoformat(fecha)
-                
-                # Seleccionar formato según el día y el valor
-                fmt = fmt_cell
-                if dt.weekday() == 6: fmt = fmt_sunday
-                
-                if val in ["F", "LAR", "LPP"]:
-                    fmt = fmt_grey if dt.weekday() != 6 else fmt_grey_sun
-                elif val == "FLR":
-                    fmt = fmt_dark_grey if dt.weekday() != 6 else fmt_dark_grey_sun
-                
-                ws_p.write(fila_excel, col_idx + 1, val, fmt)
-            
-            # Horas
-            ws_p.write(fila_excel, col_offset, row["Horas Efectivas"], fmt_cell)
-            ws_p.write(fila_excel, col_offset + 1, row["Horas Licencia"], fmt_cell)
-            ws_p.write(fila_excel, col_offset + 2, row["Horas Totales"], fmt_cell)
-            
-            # Conteo de categorías de semanas (vía df_cat_semanas)
-            for i, t_label in enumerate(tipos_de_semana):
-                conteo = 0
-                if df_cat_semanas is not None and not df_cat_semanas.empty:
-                    conteo = len(df_cat_semanas[(df_cat_semanas['Nombre'] == nombre) & (df_cat_semanas['Categoria'] == t_label)])
-                ws_p.write(fila_excel, col_offset + 3 + i, conteo, fmt_cell)
-            fila_excel += 1
-
-        # --- FILA VACÍA Y TOTALES POR FRANJA ---
-        fila_excel += 1 # Una fila vacía
-        
-        # Necesitamos el df desdoblado para contar bien
-        from datetime import timedelta
-        filas_extra = []
-        df_base = df_resultados.copy()
-        for _, r in df_base.iterrows():
-            if r['Turno'] == 'MT':
-                m = r.copy(); m['Turno'] = 'M'; filas_extra.append(m)
-                t = r.copy(); t['Turno'] = 'T'; filas_extra.append(t)
-            elif r['Turno'] == 'TNN':
-                tn = r.copy(); tn['Turno'] = 'TN'; filas_extra.append(tn)
-                n = r.copy(); n['Turno'] = 'N'
-                try: n['Fecha'] = (date.fromisoformat(n['Fecha']) + timedelta(days=1)).isoformat()
-                except: pass
-                filas_extra.append(n)
-            else:
-                filas_extra.append(r)
-        df_desdoblado = pd.DataFrame(filas_extra)
-
-        for turno_count in ["M", "T", "TN", "N"]:
-            ws_p.write(fila_excel, 0, f"TOTAL {turno_count}", fmt_total_label)
-            for col_idx, fecha in enumerate(fechas_unicas):
-                dt = date.fromisoformat(fecha)
-                count = len(df_desdoblado[(df_desdoblado['Fecha'] == fecha) & (df_desdoblado['Turno'] == turno_count)])
-                fmt = fmt_total_val if dt.weekday() != 6 else fmt_total_val_sun
-                ws_p.write(fila_excel, col_idx + 1, count if count > 0 else 0, fmt)
-            fila_excel += 1
-
-        df_reporte.to_excel(writer, sheet_name='Reporte de Horas', index=False)
-
-    print("¡Excel generado con éxito! Archivo:", file_name)
+    # 3. Reporte de Horas (Standardized)
+    from reportes.base import calcular_resumen_estandar, asignar_horas_base
+    df_reporte = calcular_resumen_estandar(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, func_horas=asignar_horas_base)
+    report.generar_reporte_resumen_sheet(df_reporte)
+    
+    report.close()
 
 def generar_y_exportar(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, config_turnos, num_semanas, flrs_asignados=None, df_cat_semanas=None):
     df_pivot, fechas_unicas = exportar_excel_data_prep(df_resultados, config_turnos)
     df_persona = exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados)
-    df_reporte = generar_reporte(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, num_semanas)
-    exportar_excel(df_pivot, df_persona, df_reporte, fechas_unicas, df_resultados, df_cat_semanas)
+    exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia)

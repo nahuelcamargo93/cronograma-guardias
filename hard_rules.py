@@ -4,7 +4,7 @@ import math
 import rule_engine as _re
 from models import Empleado, Turno
 from utils import time_to_float
-from data import FECHA_INICIO, FECHA_FIN, DEBUG_LOGS, DEBUG_DISABLE_MAX_HORAS
+from data import FECHA_INICIO, FECHA_FIN, DEBUG_LOGS, DEBUG_DISABLE_MAX_HORAS, DIA_DEL_PADRE, DIA_DE_LA_MADRE
 
 def _get_semanas_calendario(dias_del_bloque: int, fecha_inicio_dt: date) -> Dict[tuple, List[tuple]]:
     semanas = {}
@@ -45,13 +45,15 @@ def aplicar_reglas_duras(
     _aplicar_max_turnos(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
     _aplicar_excluir_turnos(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal)
     _aplicar_min_turnos(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
-    _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial_semana_previa)
+    _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial_semana_previa, reglas_servicio)
     _aplicar_limite_horas_semanales(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, demanda_turnos, turnos_dict, offset_dia, feriados, limite_horas_global)
     _aplicar_descanso_entre_turnos(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal, offset_dia, feriados, demanda_turnos, turnos_dict)
+    _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque)
     _aplicar_un_solo_turno_por_dia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
     _aplicar_max_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
     _aplicar_fin_licencia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos)
     _aplicar_min_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+    _aplicar_reglas_fechas_especiales(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
 
 def _aplicar_licencias(modelo, turnos_vars, empleados: List[Empleado], demanda_turnos, offset_dia, feriados):
     for emp in empleados:
@@ -124,7 +126,7 @@ def _aplicar_min_turnos(modelo, turnos_vars, empleados, semanas_calendario, regl
                     min_efectivo = min(min_sem, len(v_tipo) + prev_tipo)
                     modelo.Add(sum(v_tipo) + prev_tipo >= min_efectivo)
 
-def _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial):
+def _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial, reglas_servicio):
     for dia in range(dias_del_bloque):
         es_f = _is_finde(dia, offset_dia, feriados)
         tipo_dia = "Finde_Feriado" if es_f else "Semana"
@@ -157,7 +159,8 @@ def _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, aju
             
             if (not cantidad_min) and (not cantidad_max): continue
             
-            pool_vars = []
+            pool_vars_normales = []
+            pool_vars_extras = []
             d_h_start = time_to_float(demanda["hora_inicio"])
             d_h_end = time_to_float(demanda["hora_fin"])
             d_abs_start = dia * 24 + d_h_start
@@ -169,7 +172,13 @@ def _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, aju
             else:
                 d_abs_end = dia * 24 + d_h_end
 
+            # Resolver nombres extra una sola vez por bloque de cobertura
+            params_extra_glob = _re.resolver_parametros_regla('PERSONAL_EXTRA_FUERA_MINIMO', "", FECHA_INICIO, reglas_servicio, {}, {})
+            nombres_extra = params_extra_glob.get('nombres', []) if _re.regla_existe(params_extra_glob) else []
+
             for emp in empleados:
+                es_extra = emp.nombre in nombres_extra
+                
                 for d_off in [0, -1]:
                     dia_t = dia + d_off
                     if dia_t < 0:
@@ -184,7 +193,8 @@ def _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, aju
                                         ts_abs = -1 * 24 + time_to_float(t_info.hora_inicio)
                                         te_abs = ts_abs + t_info.horas
                                         if ts_abs <= d_abs_start + 0.01 and te_abs >= d_abs_end - 0.01:
-                                            pool_vars.append(1)
+                                            if es_extra: pool_vars_extras.append(1)
+                                            else: pool_vars_normales.append(1)
                         continue
 
                     if dia_t in emp.dias_licencia: continue
@@ -199,14 +209,16 @@ def _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, aju
                             ts_abs = dia_t * 24 + time_to_float(t_info.hora_inicio)
                             te_abs = ts_abs + t_info.horas
                             if ts_abs <= d_abs_start + 0.01 and te_abs >= d_abs_end - 0.01:
-                                pool_vars.append(turnos_vars[(emp.nombre, dia_t, t_nombre)])
+                                if es_extra: pool_vars_extras.append(turnos_vars[(emp.nombre, dia_t, t_nombre)])
+                                else: pool_vars_normales.append(turnos_vars[(emp.nombre, dia_t, t_nombre)])
 
             if cantidad_min is not None and cantidad_min > 0:
-                if dia == 0 and time_to_float(demanda["hora_fin"]) <= 8: pass
-                else: modelo.Add(sum(pool_vars) >= cantidad_min)
+                # Solo exceptuar si el bloque de cobertura termina en las primeras 8hs del mes (mañana del día 1)
+                if d_abs_end <= 8: pass
+                else: modelo.Add(sum(pool_vars_normales) >= cantidad_min)
             
             if cantidad_max is not None:
-                modelo.Add(sum(pool_vars) <= cantidad_max)
+                modelo.Add(sum(pool_vars_normales) + sum(pool_vars_extras) <= cantidad_max)
 
 def _aplicar_limite_horas_semanales(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas, historial, demanda_turnos, turnos_dict, offset_dia, feriados, limite_global):
     if DEBUG_DISABLE_MAX_HORAS: return
@@ -377,3 +389,83 @@ def _aplicar_min_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_b
                 
                 if vars_h:
                     modelo.Add(sum(vars_h) + horas_lic >= piso)
+
+def _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque):
+    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    for emp in empleados:
+        params = _re.resolver_parametros_regla('MIN_FINDES_MES', emp.nombre, FECHA_INICIO, reglas_servicio, emp.reglas, ajustes_reglas)
+        if not _re.regla_existe(params): continue
+        min_f = params.get('min_findes', 1)
+        
+        # Agrupar días por fin de semana (Sáb-Dom o Feriados)
+        findes = {}
+        for d in range(dias_del_bloque):
+            fecha_d = fecha_inicio_dt + timedelta(days=d)
+            if _is_finde(d, offset_dia, feriados):
+                # Usar el lunes de la semana como clave para agrupar el finde
+                lunes = (fecha_d - timedelta(days=fecha_d.weekday())).isoformat()
+                findes.setdefault(lunes, []).append(d)
+        
+        vars_findes = []
+        for lunes, dias in findes.items():
+            # Un finde es trabajable si no tiene licencia TODOS los días del finde
+            if all(d in emp.dias_licencia for d in dias): continue
+            
+            v_este_finde = modelo.NewBoolVar(f'traba_f_{emp.nombre}_{lunes}')
+            pool_f = []
+            for d in dias:
+                for td in ["Finde_Feriado"]:
+                    for t in demanda_turnos.get(td, {}).keys():
+                        if (emp.nombre, d, t) in turnos_vars:
+                            pool_f.append(turnos_vars[(emp.nombre, d, t)])
+            
+            if pool_f:
+                modelo.AddMaxEquality(v_este_finde, pool_f)
+                vars_findes.append(v_este_finde)
+        
+        if vars_findes:
+            # Relajar si el mínimo pedido es mayor a los findes disponibles
+            min_real = min(min_f, len(vars_findes))
+            modelo.Add(sum(vars_findes) >= min_real)
+
+def _aplicar_reglas_fechas_especiales(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas):
+    for emp in empleados:
+        for d in range(dias_del_bloque):
+            fecha_d_dt = fecha_inicio_dt + timedelta(days=d)
+            fecha_d_str = fecha_d_dt.isoformat()
+            
+            # 1. CUMPLEAÑOS
+            params_cumple = _re.resolver_parametros_regla('CUMPLEANOS_LIBRE', emp.nombre, fecha_d_str, reglas_servicio, emp.reglas, ajustes_reglas)
+            if _re.regla_existe(params_cumple) and not _re.regla_suspendida(params_cumple):
+                if emp.fecha_cumpleanos:
+                    # El formato en la BD puede ser YYYY-MM-DD o MM-DD. Intentamos ambos.
+                    match = False
+                    try:
+                        f_cumple = date.fromisoformat(emp.fecha_cumpleanos)
+                        if f_cumple.month == fecha_d_dt.month and f_cumple.day == fecha_d_dt.day:
+                            match = True
+                    except ValueError:
+                        # Probar si es MM-DD
+                        if len(emp.fecha_cumpleanos) == 5 and emp.fecha_cumpleanos[2] == '-':
+                            if emp.fecha_cumpleanos == f"{fecha_d_dt.month:02d}-{fecha_d_dt.day:02d}":
+                                match = True
+                    
+                    if match:
+                        _prohibir_turnos_dia(modelo, turnos_vars, emp.nombre, d, demanda_turnos)
+
+            # 2. DIA DEL PADRE / MADRE
+            params_familia = _re.resolver_parametros_regla('DIA_MADRE_PADRE_LIBRE', emp.nombre, fecha_d_str, reglas_servicio, emp.reglas, ajustes_reglas)
+            if _re.regla_existe(params_familia) and not _re.regla_suspendida(params_familia):
+                # Dia del Padre
+                if emp.es_padre and fecha_d_str == DIA_DEL_PADRE:
+                    _prohibir_turnos_dia(modelo, turnos_vars, emp.nombre, d, demanda_turnos)
+                
+                # Dia de la Madre
+                if emp.es_madre and fecha_d_str == DIA_DE_LA_MADRE:
+                    _prohibir_turnos_dia(modelo, turnos_vars, emp.nombre, d, demanda_turnos)
+
+def _prohibir_turnos_dia(modelo, turnos_vars, nombre_emp, dia_idx, demanda_turnos):
+    for td in ["Semana", "Finde_Feriado"]:
+        for t in demanda_turnos.get(td, {}).keys():
+            if (nombre_emp, dia_idx, t) in turnos_vars:
+                modelo.Add(turnos_vars[(nombre_emp, dia_idx, t)] == 0)

@@ -54,7 +54,9 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
             findes_largos_4_previos=hist.get('Findes_Largos_4_Previos', 0),
             horas_fijas_semanales=horas_fijas,
             dias_licencia=get_dias_licencia(nombre, fecha_inicio_dt, dias_del_bloque),
-            reglas=reglas
+            reglas=reglas,
+            horas_mensuales_reglamentarias=row.get('horas_mensuales_reglamentarias'),
+            fecha_inicio_historial=hist.get('Fecha_Inicio_Historial')
         )
         empleados.append(emp)
         

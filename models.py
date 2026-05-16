@@ -40,4 +40,7 @@ class Empleado:
 
     # Reglas específicas de la BD para este empleado
     reglas: Dict[str, Any] = field(default_factory=dict)
+    
+    horas_mensuales_reglamentarias: Optional[int] = None
+    fecha_inicio_historial: Optional[str] = None
 

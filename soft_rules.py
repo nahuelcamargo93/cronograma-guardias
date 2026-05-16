@@ -517,9 +517,9 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
         )
 
         active_flr_rule = None
-        if not rule_engine.regla_suspendida(params_flr):
+        if rule_engine.regla_existe(params_flr) and not rule_engine.regla_suspendida(params_flr):
             active_flr_rule = ('normal', params_flr)
-        elif not rule_engine.regla_suspendida(params_flr_estricto):
+        elif rule_engine.regla_existe(params_flr_estricto) and not rule_engine.regla_suspendida(params_flr_estricto):
             active_flr_rule = ('estricto', params_flr_estricto)
 
         if active_flr_rule:
@@ -697,7 +697,7 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
                             h_vars_m.append(turnos[(nombre, d, t)] * h_t)
                 
                 # Licencias pro-rata
-                dias_lic_m = [d for d in dias_m if d in dias_bloqueados_emp]
+                dias_lic_m = [d for d in dias_m if d in dias_bloqueados_persona]
                 val_dia = 144.0 / dias_del_bloque
                 h_lic_m = int(val_dia * len(dias_lic_m) + 0.5)
                 

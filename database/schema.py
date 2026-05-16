@@ -25,7 +25,8 @@ def inicializar_db():
                 fecha_cumpleanos TEXT,
                 es_madre INTEGER DEFAULT 0,
                 es_padre INTEGER DEFAULT 0,
-                regimen_trabajo TEXT
+                regimen_trabajo TEXT,
+                horas_mensuales_reglamentarias INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS cronogramas (
@@ -67,7 +68,8 @@ def inicializar_db():
                 nombre       TEXT NOT NULL REFERENCES personal(nombre),
                 tipo         TEXT NOT NULL CHECK(tipo IN ('LPP', 'LAR', 'LM')),
                 fecha_inicio TEXT NOT NULL,
-                fecha_fin    TEXT NOT NULL
+                fecha_fin    TEXT NOT NULL,
+                metadata     TEXT
             );
 
             -- MOTOR DE REGLAS MULTI-TENANT --
@@ -192,6 +194,10 @@ def inicializar_db():
         try:
             conn.execute("ALTER TABLE personal ADD COLUMN regimen_trabajo TEXT")
         except sqlite3.OperationalError: pass
+
+        try:
+            conn.execute("ALTER TABLE personal ADD COLUMN horas_mensuales_reglamentarias INTEGER")
+        except sqlite3.OperationalError: pass
         
         try:
             conn.execute("ALTER TABLE turnos_config ADD COLUMN dias_semana TEXT DEFAULT '0,1,2,3,4,5,6'")
@@ -217,6 +223,10 @@ def inicializar_db():
             conn.execute("ALTER TABLE demanda_ajustes ADD COLUMN cantidad_min INTEGER")
             conn.execute("ALTER TABLE demanda_ajustes ADD COLUMN cantidad_max INTEGER")
             conn.execute("UPDATE demanda_ajustes SET cantidad_min = cantidad, cantidad_max = cantidad")
+        except sqlite3.OperationalError: pass
+
+        try:
+            conn.execute("ALTER TABLE licencias ADD COLUMN metadata TEXT")
         except sqlite3.OperationalError: pass
 
         # personal_reglas_ajustes ya se crea via CREATE TABLE IF NOT EXISTS en executescript
