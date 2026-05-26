@@ -7,14 +7,16 @@ from models import Empleado, Turno
 LAR = {}
 LPP = {}
 LM  = {}
+CM  = {}
 
 def init_licencias():
-    """Carga LAR, LPP y LM desde la BD en los dicts de módulo. Llamar una vez al inicio."""
-    global LAR, LPP, LM
+    """Carga LAR, LPP, LM y CM desde la BD en los dicts de módulo. Llamar una vez al inicio."""
+    global LAR, LPP, LM, CM
     raw = cargar_licencias_db()
     LAR.clear()
     LPP.clear()
     LM.clear()
+    CM.clear()
     for nombre, rangos in raw.items():
         for (tipo, fi, ff) in rangos:
             tipo_up = tipo.upper()
@@ -24,6 +26,8 @@ def init_licencias():
                 LPP.setdefault(nombre, []).append((fi, ff))
             elif tipo_up == 'LM':
                 LM.setdefault(nombre, []).append((fi, ff))
+            elif tipo_up == 'CM':
+                CM.setdefault(nombre, []).append((fi, ff))
                 
     # (Se eliminó la carga automática de FLRs aquí para evitar bloqueos en re-ejecuciones)
     pass
@@ -53,19 +57,38 @@ def obtener_personal_db(servicio_id):
     """Retorna la lista de personal para un servicio específico."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT nombre, rol FROM personal WHERE servicio_id = ? ORDER BY nombre", 
+            "SELECT nombre, categoria, rol FROM personal WHERE servicio_id = ? AND COALESCE(activo, 1) = 1 ORDER BY nombre", 
             (servicio_id,)
         ).fetchall()
-    return [{'Nombre': r[0], 'Rol': r[1]} for r in rows]
+        
+        # Obtener puestos habilitados (todos) y cuáles son primarios
+        puestos_rows = conn.execute("""
+            SELECT pp.personal_nombre, p.nombre, COALESCE(pp.es_primario, 1) as es_primario
+            FROM personal_puestos pp
+            JOIN puestos p ON pp.puesto_id = p.id
+            WHERE p.servicio_id = ?
+        """, (servicio_id,)).fetchall()
+        
+        puestos_map = {}
+        puestos_primarios_map = {}
+        for p_nombre, p_puesto, es_prim in puestos_rows:
+            puestos_map.setdefault(p_nombre, set()).add(p_puesto)
+            if es_prim:
+                puestos_primarios_map.setdefault(p_nombre, set()).add(p_puesto)
+            
+    return [{'Nombre': r[0], 'Categoria': r[1], 'Rol': r[2],
+             'Puestos_Habilitados': list(puestos_map.get(r[0], [])),
+             'Puestos_Primarios': list(puestos_primarios_map.get(r[0], []))} for r in rows]
 
 def sincronizar_personal(df_personal):
     """Inserta o actualiza el personal en la tabla dimensional."""
     with get_connection() as conn:
         for _, persona in df_personal.iterrows():
+            categoria = persona.get('Categoria') if 'Categoria' in persona else None
             conn.execute("""
-                INSERT INTO personal (nombre, rol) VALUES (?, ?)
-                ON CONFLICT(nombre) DO UPDATE SET rol = excluded.rol
-            """, (persona['Nombre'], persona['Rol']))
+                INSERT INTO personal (nombre, categoria, rol) VALUES (?, ?, ?)
+                ON CONFLICT(nombre) DO UPDATE SET categoria = excluded.categoria, rol = excluded.rol
+            """, (persona['Nombre'], categoria, persona['Rol']))
 
 
 def _calcular_bloques_largos(fecha_inicio_dt, dias_totales, feriados_indices, offset_dia):
@@ -91,58 +114,77 @@ def _calcular_bloques_largos(fecha_inicio_dt, dias_totales, feriados_indices, of
 def cargar_historial(df_personal, fecha_corte_str):
     """
     Carga acumulados históricos ANTERIORES a fecha_corte_str.
+    Solo considera cronogramas con estado='aprobado'.
     Retorna dict: {nombre: {campo: valor}} con los valores _Previos.
-    Los campos Findes_Habiles_Previos se calculan como total de semanas
-    históricas (aproximación conservadora, sin datos de licencias pasadas).
     """
     with get_connection() as conn:
-        # Horas acumuladas
+        # Horas acumuladas (solo de cronogramas aprobados)
         horas_map = dict(conn.execute("""
-            SELECT nombre, COALESCE(SUM(horas), 0)
-            FROM guardias
-            WHERE fecha < ?
-            GROUP BY nombre
+            SELECT g.nombre, COALESCE(SUM(g.horas), 0)
+            FROM guardias g
+            JOIN cronogramas c ON g.cronograma_id = c.id
+            WHERE g.fecha < ? AND c.estado = 'aprobado'
+            GROUP BY g.nombre
         """, (fecha_corte_str,)).fetchall())
 
-        # Fines de semana trabajados (semanas ISO distintas con guardia en finde)
+        # Feriados trabajados históricos (solo de cronogramas aprobados)
+        from data import FERIADOS as data_feriados
+        placeholders = ",".join("?" for _ in data_feriados)
+        feriados_trab_map = {}
+        if data_feriados:
+            feriados_trab_map = dict(conn.execute(f"""
+                SELECT g.nombre, COUNT(DISTINCT g.fecha)
+                FROM guardias g
+                JOIN cronogramas c ON g.cronograma_id = c.id
+                WHERE g.fecha < ? AND c.estado = 'aprobado' AND g.fecha IN ({placeholders})
+                GROUP BY g.nombre
+            """, [fecha_corte_str] + data_feriados).fetchall())
+
+        # Fines de semana trabajados (solo de cronogramas aprobados)
         fstrab_map = dict(conn.execute("""
-            SELECT nombre, COUNT(DISTINCT strftime('%Y-%W', fecha))
-            FROM guardias
-            WHERE es_finde = 1 AND fecha < ?
-            GROUP BY nombre
+            SELECT g.nombre, COUNT(DISTINCT strftime('%Y-%W', g.fecha))
+            FROM guardias g
+            JOIN cronogramas c ON g.cronograma_id = c.id
+            WHERE g.es_finde = 1 AND g.fecha < ? AND c.estado = 'aprobado'
+            GROUP BY g.nombre
         """, (fecha_corte_str,)).fetchall())
 
-        # Fecha de inicio de historial por persona
+        # Fecha de inicio de historial por persona (solo de cronogramas aprobados)
         fecha_ini_map = dict(conn.execute("""
-            SELECT nombre, MIN(fecha)
-            FROM guardias
-            WHERE fecha < ?
-            GROUP BY nombre
+            SELECT g.nombre, MIN(g.fecha)
+            FROM guardias g
+            JOIN cronogramas c ON g.cronograma_id = c.id
+            WHERE g.fecha < ? AND c.estado = 'aprobado'
+            GROUP BY g.nombre
         """, (fecha_corte_str,)).fetchall())
 
-        # Total de semanas en período histórico (para Findes_Habiles aproximado)
+        # Total de semanas en período histórico (solo de cronogramas aprobados)
         total_semanas_hist = conn.execute("""
-            SELECT COUNT(DISTINCT strftime('%Y-%W', fecha))
-            FROM guardias
-            WHERE es_finde = 1 AND fecha < ?
+            SELECT COUNT(DISTINCT strftime('%Y-%W', g.fecha))
+            FROM guardias g
+            JOIN cronogramas c ON g.cronograma_id = c.id
+            WHERE g.es_finde = 1 AND g.fecha < ? AND c.estado = 'aprobado'
         """, (fecha_corte_str,)).fetchone()[0] or 0
 
-        # Bloques de finde largo históricos
+        # Bloques de finde largo históricos (solo de cronogramas aprobados)
         bloques_rows = conn.execute("""
-            SELECT id, fecha_inicio, fecha_fin, tipo
-            FROM bloques_finde_largo
-            WHERE fecha_inicio < ?
+            SELECT bfl.id, bfl.fecha_inicio, bfl.fecha_fin, bfl.tipo
+            FROM bloques_finde_largo bfl
+            JOIN cronogramas c ON bfl.cronograma_id = c.id
+            WHERE bfl.fecha_inicio < ? AND c.estado = 'aprobado'
         """, (fecha_corte_str,)).fetchall()
 
-    # Para cada bloque: ¿quién trabajó?
+    # Para cada bloque: ¿quién trabajó? (solo guardias de cronogramas aprobados)
     fl3_trab = {n: 0 for n in df_personal['Nombre']}
     fl4_trab = {n: 0 for n in df_personal['Nombre']}
 
     with get_connection() as conn:
         for bloque_id, fi, ff, tipo in bloques_rows:
             trabajaron = {r[0] for r in conn.execute("""
-                SELECT DISTINCT nombre FROM guardias
-                WHERE fecha BETWEEN ? AND ? AND es_finde = 1
+                SELECT DISTINCT g.nombre FROM guardias g
+                JOIN cronogramas c ON g.cronograma_id = c.id
+                WHERE g.fecha BETWEEN ? AND ? AND g.es_finde = 1
+                  AND c.estado = 'aprobado'
             """, (fi, ff)).fetchall()}
 
             for nombre in df_personal['Nombre']:
@@ -157,29 +199,50 @@ def cargar_historial(df_personal, fecha_corte_str):
         resultado[nombre] = {
             'Horas_Anuales_Previas':   horas_map.get(nombre, 0),
             'Findes_Semanas_Previos':  fstrab_map.get(nombre, 0),
-            'Findes_Habiles_Previos':  total_semanas_hist,  # aprox: mismas semanas para todos
+            'Findes_Habiles_Previos':  total_semanas_hist,
             'Findes_Largos_3_Previos': fl3_trab.get(nombre, 0),
             'Findes_Largos_4_Previos': fl4_trab.get(nombre, 0),
             'Fecha_Inicio_Historial':  fecha_ini_map.get(nombre),
+            'Feriados_Previos':        feriados_trab_map.get(nombre, 0),
         }
     return resultado
 
 
-def cargar_guardias_previas(fecha_inicio_str, dias_atras=7):
+def cargar_guardias_previas(fecha_inicio_str, dias_atras=28, servicio_id=None):
     """
-    Retorna las guardias asignadas en los últimos 'dias_atras' días antes de fecha_inicio_str.
+    Retorna las guardias asignadas del ULTIMO cronograma aprobado para este servicio.
     Devuelve dict: { nombre: [ { 'fecha': 'YYYY-MM-DD', 'turno': 'Noche', 'horas': 12 }, ... ] }
+    Ignora dias_atras para buscar directamente el ultimo bloque entero.
     """
-    from datetime import date, timedelta
-    fecha_ini = date.fromisoformat(fecha_inicio_str)
-    fecha_desde = (fecha_ini - timedelta(days=dias_atras)).isoformat()
-    
     with get_connection() as conn:
-        rows = conn.execute("""
-            SELECT nombre, fecha, turno, horas 
-            FROM guardias 
-            WHERE fecha >= ? AND fecha < ?
-        """, (fecha_desde, fecha_inicio_str)).fetchall()
+        # 1. Buscar el ID del ultimo cronograma aprobado
+        ultimo_cr_query = """
+            SELECT id FROM cronogramas
+            WHERE estado = 'aprobado' AND fecha_inicio < ?
+            ORDER BY fecha_inicio DESC
+            LIMIT 1
+        """
+        row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str]).fetchone()
+        
+        if not row_cr:
+            return {} # No hay cronogramas previos aprobados
+        
+        cronograma_id = row_cr[0]
+
+        # 2. Traer todas las guardias de ese cronograma
+        query = """
+            SELECT g.nombre, g.fecha, g.turno, g.horas 
+            FROM guardias g
+            JOIN personal p ON g.nombre = p.nombre
+            WHERE g.cronograma_id = ?
+        """
+        params = [cronograma_id]
+        
+        if servicio_id is not None:
+            query += " AND p.servicio_id = ?"
+            params.append(servicio_id)
+            
+        rows = conn.execute(query, params).fetchall()
         
     historial = {}
     for nombre, fecha, turno, horas in rows:
@@ -192,7 +255,7 @@ def cargar_guardias_previas(fecha_inicio_str, dias_atras=7):
 
 
 def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
-                       feriados_indices, offset_dia, dias_del_bloque, notas=""):
+                       feriados_indices, offset_dia, dias_del_bloque, notas="", df_cat_semanas=None):
     """
     Persiste un cronograma aceptado en la BD.
     Guarda: cabecera en cronogramas, cada guardia en guardias,
@@ -208,10 +271,9 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
     )
 
     with get_connection() as conn:
-        # 1. Cabecera
         cur = conn.execute("""
-            INSERT INTO cronogramas (fecha_inicio, fecha_fin, creado_en, notas)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO cronogramas (fecha_inicio, fecha_fin, creado_en, notas, estado)
+            VALUES (?, ?, ?, ?, 'borrador')
         """, (fecha_inicio, fecha_fin,
               datetime.now().isoformat(timespec='seconds'), notas))
         cronograma_id = cur.lastrowid
@@ -227,11 +289,14 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
             """, (cronograma_id, fi, ff, tipo))
 
         # 3. Guardias individuales
+        cur_t = conn.execute("SELECT nombre, horas FROM turnos_config")
+        mapa_horas = {r[0]: r[1] for r in cur_t.fetchall()}
+
         for _, row in df_resultados.iterrows():
             fecha = row['Fecha']
             turno = row['Turno']
             nombre = row['Personal']
-            horas = 12 if (turno.startswith('Noche') or turno.startswith('Dia')) else 6
+            horas = mapa_horas.get(turno, 6)
             d = (date.fromisoformat(fecha) - fecha_inicio_dt).days
             es_finde = 1 if d in finde_indices else 0
 
@@ -239,6 +304,14 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
                 INSERT INTO guardias (cronograma_id, nombre, fecha, turno, horas, es_finde)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (cronograma_id, nombre, fecha, turno, horas, es_finde))
+
+        # 4. Categorías semanales del solver
+        if df_cat_semanas is not None and not df_cat_semanas.empty:
+            for _, row in df_cat_semanas.iterrows():
+                conn.execute("""
+                    INSERT INTO semanas_categorias (cronograma_id, nombre, fecha_lunes, categoria)
+                    VALUES (?, ?, ?, ?)
+                """, (cronograma_id, row['Nombre'], row['Fecha_Lunes'], row['Categoria']))
 
     print(f"[OK] Cronograma guardado en BD (id={cronograma_id}): {fecha_inicio} -> {fecha_fin}")
     return cronograma_id
@@ -277,8 +350,8 @@ def insertar_licencia(nombre, tipo, fecha_inicio, fecha_fin):
     (mismo nombre, tipo, inicio y fin) la omite silenciosamente.
     """
     tipo = tipo.upper()
-    if tipo not in ('LPP', 'LAR'):
-        raise ValueError(f"Tipo de licencia inválido: '{tipo}'. Debe ser 'LPP' o 'LAR'.")
+    if tipo not in ('LPP', 'LAR', 'CM', 'LM'):
+        raise ValueError(f"Tipo de licencia inválido: '{tipo}'. Debe ser 'LPP', 'LAR', 'CM' o 'LM'.")
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO licencias (nombre, tipo, fecha_inicio, fecha_fin)
@@ -330,18 +403,16 @@ def cargar_reglas_servicio(servicio_id=1):
         
         # Reglas de organización
         rows_org = conn.execute("""
-            SELECT rc.codigo_regla, or_r.parametros_json
-            FROM organizaciones_reglas or_r
-            JOIN reglas_catalogo rc ON or_r.regla_id = rc.id
-            WHERE or_r.organizacion_id = ?
+            SELECT codigo_regla, parametros_json
+            FROM organizaciones_reglas
+            WHERE organizacion_id = ? AND activo = 1
         """, (org_id,)).fetchall()
         
         # Reglas de servicio
         rows_serv = conn.execute("""
-            SELECT rc.codigo_regla, sr.parametros_json
-            FROM servicios_reglas sr
-            JOIN reglas_catalogo rc ON sr.regla_id = rc.id
-            WHERE sr.servicio_id = ?
+            SELECT codigo_regla, parametros_json
+            FROM servicios_reglas
+            WHERE servicio_id = ? AND activo = 1
         """, (servicio_id,)).fetchall()
     
     reglas = {}
@@ -363,11 +434,10 @@ def cargar_reglas_personal(servicio_id=1):
     """
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT pr.personal_nombre, rc.codigo_regla, pr.parametros_json
+            SELECT pr.personal_nombre, pr.codigo_regla, pr.parametros_json
             FROM personal_reglas pr
-            JOIN reglas_catalogo rc ON pr.regla_id = rc.id
             JOIN personal p ON pr.personal_nombre = p.nombre
-            WHERE p.servicio_id = ?
+            WHERE p.servicio_id = ? AND pr.activo = 1 AND COALESCE(p.activo, 1) = 1
         """, (servicio_id,)).fetchall()
     
     reglas = {}
@@ -498,14 +568,14 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
 
         # 2. Cargar Demanda Base
         rows_demanda = conn.execute("""
-            SELECT dc.id, p.nombre as puesto, dc.tipo_dia, dc.hora_inicio, dc.hora_fin, dc.cantidad_min, dc.cantidad_max, dc.puesto_id
+            SELECT dc.id, p.nombre as puesto, dc.tipo_dia, dc.hora_inicio, dc.hora_fin, dc.cantidad_min, dc.cantidad_max, dc.puesto_id, dc.dias_semana
             FROM demanda_config dc
             JOIN puestos p ON dc.puesto_id = p.id
-            WHERE p.servicio_id = ?
+            WHERE p.servicio_id = ? AND dc.activo = 1
         """, (servicio_id,)).fetchall()
 
         demanda_req = {"Semana": [], "Finde_Feriado": []}
-        for d_id, puesto, t_dia, h_ini, h_fin, c_min, c_max, p_id in rows_demanda:
+        for d_id, puesto, t_dia, h_ini, h_fin, c_min, c_max, p_id, d_sem in rows_demanda:
             item = {
                 "id": d_id,
                 "puesto": puesto,
@@ -513,7 +583,8 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
                 "hora_inicio": h_ini,
                 "hora_fin": h_fin,
                 "cantidad_min": c_min,
-                "cantidad_max": c_max
+                "cantidad_max": c_max,
+                "dias_semana": d_sem
             }
             demanda_req[t_dia].append(item)
 
@@ -525,7 +596,7 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
                 FROM demanda_ajustes da
                 JOIN demanda_config dc ON da.demanda_config_id = dc.id
                 JOIN puestos p ON dc.puesto_id = p.id
-                WHERE p.servicio_id = ? 
+                WHERE p.servicio_id = ? AND da.activo = 1 AND dc.activo = 1
                   AND ((da.fecha_inicio BETWEEN ? AND ?) OR (da.fecha_fin BETWEEN ? AND ?))
             """, (servicio_id, fecha_inicio, fecha_fin, fecha_inicio, fecha_fin)).fetchall()
             

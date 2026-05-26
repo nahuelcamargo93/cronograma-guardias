@@ -19,20 +19,28 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cronograma_i
 # Licencias cargadas en memoria una vez al inicio (via init_licencias())
 LAR: dict = {}
 LPP: dict = {}
+LM: dict = {}
+CM: dict = {}
 
 
 def init_licencias():
-    """Carga LAR y LPP desde la BD en los dicts de módulo. Llamar una vez al inicio."""
-    global LAR, LPP
+    """Carga LAR, LPP, LM y CM desde la BD en los dicts de módulo. Llamar una vez al inicio."""
+    global LAR, LPP, LM, CM
     raw = cargar_licencias_db()
     LAR = {}
     LPP = {}
+    LM = {}
+    CM = {}
     for nombre, rangos in raw.items():
         for (tipo, fi, ff) in rangos:
             if tipo == 'LAR':
                 LAR.setdefault(nombre, []).append((fi, ff))
             elif tipo == 'LPP':
                 LPP.setdefault(nombre, []).append((fi, ff))
+            elif tipo == 'LM':
+                LM.setdefault(nombre, []).append((fi, ff))
+            elif tipo == 'CM':
+                CM.setdefault(nombre, []).append((fi, ff))
                 
     # Cargar FLRs asignados como LAR para que sean intocables
     with get_connection() as conn:
@@ -45,14 +53,85 @@ def init_licencias():
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60.0)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def migrar_db_a_codigo_regla(conn):
+    """Migra el esquema de la base de datos reemplazando regla_id por codigo_regla en tablas de reglas."""
+    try:
+        cur = conn.execute("PRAGMA table_info(servicios_reglas)")
+        columns = [row[1] for row in cur.fetchall()]
+    except sqlite3.OperationalError:
+        return # La tabla no existe aún
+
+    if 'regla_id' in columns:
+        print("Iniciando migración de base de datos a schema con codigo_regla...")
+        # 1. Crear tablas temporales con el esquema nuevo
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS organizaciones_reglas_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organizacion_id INTEGER NOT NULL REFERENCES organizaciones(id),
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
+                parametros_json TEXT,
+                UNIQUE(organizacion_id, codigo_regla)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS servicios_reglas_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                servicio_id INTEGER NOT NULL REFERENCES servicios(id),
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
+                parametros_json TEXT,
+                UNIQUE(servicio_id, codigo_regla)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS personal_reglas_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                personal_nombre TEXT NOT NULL REFERENCES personal(nombre),
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
+                parametros_json TEXT,
+                UNIQUE(personal_nombre, codigo_regla)
+            )
+        """)
+
+        # 2. Pasar los datos resolviendo regla_id a codigo_regla
+        conn.execute("""
+            INSERT INTO organizaciones_reglas_new (id, organizacion_id, codigo_regla, parametros_json)
+            SELECT o.id, o.organizacion_id, r.codigo_regla, o.parametros_json
+            FROM organizaciones_reglas o
+            JOIN reglas_catalogo r ON o.regla_id = r.id
+        """)
+        conn.execute("""
+            INSERT INTO servicios_reglas_new (id, servicio_id, codigo_regla, parametros_json)
+            SELECT s.id, s.servicio_id, r.codigo_regla, s.parametros_json
+            FROM servicios_reglas s
+            JOIN reglas_catalogo r ON s.regla_id = r.id
+        """)
+        conn.execute("""
+            INSERT INTO personal_reglas_new (id, personal_nombre, codigo_regla, parametros_json)
+            SELECT p.id, p.personal_nombre, r.codigo_regla, p.parametros_json
+            FROM personal_reglas p
+            JOIN reglas_catalogo r ON p.regla_id = r.id
+        """)
+
+        # 3. Borrar tablas viejas y renombrar las nuevas
+        conn.execute("DROP TABLE organizaciones_reglas")
+        conn.execute("DROP TABLE servicios_reglas")
+        conn.execute("DROP TABLE personal_reglas")
+
+        conn.execute("ALTER TABLE organizaciones_reglas_new RENAME TO organizaciones_reglas")
+        conn.execute("ALTER TABLE servicios_reglas_new RENAME TO servicios_reglas")
+        conn.execute("ALTER TABLE personal_reglas_new RENAME TO personal_reglas")
+        print("Migración de base de datos finalizada con éxito.")
 
 
 def inicializar_db():
     """Crea las tablas si no existen. Seguro de llamar múltiples veces."""
     with get_connection() as conn:
+        migrar_db_a_codigo_regla(conn)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS organizaciones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,12 +147,14 @@ def inicializar_db():
 
             CREATE TABLE IF NOT EXISTS personal (
                 nombre TEXT PRIMARY KEY,
+                categoria TEXT,
                 rol    TEXT NOT NULL,
                 servicio_id INTEGER REFERENCES servicios(id),
                 fecha_cumpleanos TEXT,
                 es_madre INTEGER DEFAULT 0,
                 es_padre INTEGER DEFAULT 0,
-                regimen_trabajo TEXT
+                regimen_trabajo TEXT,
+                activo INTEGER DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS cronogramas (
@@ -81,7 +162,8 @@ def inicializar_db():
                 fecha_inicio TEXT NOT NULL,
                 fecha_fin    TEXT NOT NULL,
                 creado_en    TEXT,
-                notas        TEXT
+                notas        TEXT,
+                estado       TEXT DEFAULT 'aprobado'
             );
 
             CREATE TABLE IF NOT EXISTS guardias (
@@ -110,12 +192,22 @@ def inicializar_db():
                 fecha_fin TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS semanas_categorias (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cronograma_id INTEGER NOT NULL REFERENCES cronogramas(id) ON DELETE CASCADE,
+                nombre TEXT NOT NULL REFERENCES personal(nombre),
+                fecha_lunes TEXT NOT NULL,
+                categoria TEXT NOT NULL,
+                UNIQUE(cronograma_id, nombre, fecha_lunes)
+            );
+
             CREATE TABLE IF NOT EXISTS licencias (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre       TEXT NOT NULL REFERENCES personal(nombre),
-                tipo         TEXT NOT NULL CHECK(tipo IN ('LPP', 'LAR')),
+                tipo         TEXT NOT NULL CHECK(tipo IN ('LPP', 'LAR', 'CM', 'LM')),
                 fecha_inicio TEXT NOT NULL,
-                fecha_fin    TEXT NOT NULL
+                fecha_fin    TEXT NOT NULL,
+                metadata     TEXT
             );
 
             -- MOTOR DE REGLAS MULTI-TENANT --
@@ -129,25 +221,28 @@ def inicializar_db():
             CREATE TABLE IF NOT EXISTS organizaciones_reglas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 organizacion_id INTEGER NOT NULL REFERENCES organizaciones(id),
-                regla_id INTEGER NOT NULL REFERENCES reglas_catalogo(id),
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
                 parametros_json TEXT,
-                UNIQUE(organizacion_id, regla_id)
+                activo INTEGER DEFAULT 1,
+                UNIQUE(organizacion_id, codigo_regla)
             );
 
             CREATE TABLE IF NOT EXISTS servicios_reglas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 servicio_id INTEGER NOT NULL REFERENCES servicios(id),
-                regla_id INTEGER NOT NULL REFERENCES reglas_catalogo(id),
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
                 parametros_json TEXT,
-                UNIQUE(servicio_id, regla_id)
+                activo INTEGER DEFAULT 1,
+                UNIQUE(servicio_id, codigo_regla)
             );
 
             CREATE TABLE IF NOT EXISTS personal_reglas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 personal_nombre TEXT NOT NULL REFERENCES personal(nombre),
-                regla_id INTEGER NOT NULL REFERENCES reglas_catalogo(id),
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
                 parametros_json TEXT,
-                UNIQUE(personal_nombre, regla_id)
+                activo INTEGER DEFAULT 1,
+                UNIQUE(personal_nombre, codigo_regla)
             );
 
             CREATE TABLE IF NOT EXISTS puestos (
@@ -155,6 +250,13 @@ def inicializar_db():
                 servicio_id INTEGER NOT NULL REFERENCES servicios(id),
                 nombre TEXT NOT NULL,
                 UNIQUE(servicio_id, nombre)
+            );
+
+            CREATE TABLE IF NOT EXISTS personal_puestos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                personal_nombre TEXT NOT NULL REFERENCES personal(nombre) ON DELETE CASCADE,
+                puesto_id INTEGER NOT NULL REFERENCES puestos(id) ON DELETE CASCADE,
+                UNIQUE(personal_nombre, puesto_id)
             );
 
             CREATE TABLE IF NOT EXISTS demanda_config (
@@ -165,7 +267,9 @@ def inicializar_db():
                 hora_fin TEXT NOT NULL,
                 cantidad_min INTEGER,
                 cantidad_max INTEGER,
-                UNIQUE(puesto_id, tipo_dia, hora_inicio, hora_fin)
+                dias_semana TEXT,
+                activo INTEGER DEFAULT 1,
+                UNIQUE(puesto_id, tipo_dia, hora_inicio, hora_fin, dias_semana)
             );
 
             CREATE TABLE IF NOT EXISTS demanda_ajustes (
@@ -175,7 +279,8 @@ def inicializar_db():
                 fecha_fin TEXT NOT NULL,
                 cantidad_min INTEGER,
                 cantidad_max INTEGER,
-                dias_semana TEXT
+                dias_semana TEXT,
+                activo INTEGER DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS turnos_config (
@@ -196,7 +301,8 @@ def inicializar_db():
                 fecha_inicio TEXT NOT NULL,
                 fecha_fin TEXT NOT NULL,
                 vacantes INTEGER NOT NULL,
-                dias_semana TEXT -- Sobrescribe los dias del turno si no es NULL
+                dias_semana TEXT, -- Sobrescribe los dias del turno si no es NULL
+                activo INTEGER DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS personal_reglas_ajustes (
@@ -238,7 +344,15 @@ def inicializar_db():
         except sqlite3.OperationalError: pass
         
         try:
+            conn.execute("ALTER TABLE cronogramas ADD COLUMN estado TEXT DEFAULT 'aprobado'")
+        except sqlite3.OperationalError: pass
+        
+        try:
             conn.execute("ALTER TABLE personal ADD COLUMN regimen_trabajo TEXT")
+        except sqlite3.OperationalError: pass
+        
+        try:
+            conn.execute("ALTER TABLE personal ADD COLUMN activo INTEGER DEFAULT 1")
         except sqlite3.OperationalError: pass
         
         try:
@@ -267,14 +381,116 @@ def inicializar_db():
             conn.execute("UPDATE demanda_ajustes SET cantidad_min = cantidad, cantidad_max = cantidad")
         except sqlite3.OperationalError: pass
 
+        # Agregar columna activo a las tablas que no lo tenian
+        tablas_a_migrar_activo = [
+            "organizaciones_reglas", "servicios_reglas", "personal_reglas",
+            "demanda_config", "demanda_ajustes", "turnos_ajustes"
+        ]
+        for t_name in tablas_a_migrar_activo:
+            try:
+                conn.execute(f"ALTER TABLE {t_name} ADD COLUMN activo INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
+
+        # Migración para actualizar la restricción UNIQUE de demanda_config e incluir dias_semana
+        try:
+            cur = conn.execute("PRAGMA table_info(demanda_config)")
+            columns = [row[1] for row in cur.fetchall()]
+            if 'dias_semana' not in columns:
+                conn.execute("ALTER TABLE demanda_config RENAME TO demanda_config_old")
+                conn.execute("""
+                    CREATE TABLE demanda_config (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        puesto_id INTEGER NOT NULL REFERENCES puestos(id),
+                        tipo_dia TEXT NOT NULL CHECK(tipo_dia IN ('Semana', 'Finde_Feriado')),
+                        hora_inicio TEXT NOT NULL,
+                        hora_fin TEXT NOT NULL,
+                        cantidad_min INTEGER,
+                        cantidad_max INTEGER,
+                        dias_semana TEXT,
+                        UNIQUE(puesto_id, tipo_dia, hora_inicio, hora_fin, dias_semana)
+                    )
+                """)
+                conn.execute("""
+                    INSERT INTO demanda_config (id, puesto_id, tipo_dia, hora_inicio, hora_fin, cantidad_min, cantidad_max)
+                    SELECT id, puesto_id, tipo_dia, hora_inicio, hora_fin, cantidad_min, cantidad_max
+                    FROM demanda_config_old
+                """)
+                conn.execute("DROP TABLE demanda_config_old")
+                print("Migración de demanda_config finalizada con éxito.")
+        except Exception as e:
+            print(f"Error migrando demanda_config: {e}")
+
+        # Migración: agregar es_primario a personal_puestos
+        try:
+            cur_pp = conn.execute("PRAGMA table_info(personal_puestos)")
+            pp_cols = [row[1] for row in cur_pp.fetchall()]
+            if 'es_primario' not in pp_cols:
+                conn.execute("ALTER TABLE personal_puestos ADD COLUMN es_primario INTEGER DEFAULT 1")
+                print("Migración personal_puestos: columna es_primario agregada (todos marcados como primario por defecto).")
+        except Exception as e:
+            print(f"Error migrando personal_puestos (es_primario): {e}")
+
         # personal_reglas_ajustes ya se crea via CREATE TABLE IF NOT EXISTS en executescript
 
         # Asegurar datos iniciales HCRC -> Kinesiología Crítica
         conn.execute("INSERT OR IGNORE INTO organizaciones (id, nombre) VALUES (1, 'HCRC')")
         conn.execute("INSERT OR IGNORE INTO servicios (id, organizacion_id, nombre) VALUES (1, 1, 'Kinesiologia Critica')")
         
+        # Asegurar COM Juana Koslay -> Personal de Monitoreo
+        conn.execute("INSERT OR IGNORE INTO organizaciones (nombre) VALUES ('COM Juana Koslay')")
+        org_row = conn.execute("SELECT id FROM organizaciones WHERE nombre = 'COM Juana Koslay'").fetchone()
+        if org_row:
+            conn.execute("INSERT OR IGNORE INTO servicios (organizacion_id, nombre) VALUES (?, 'Personal de Monitoreo')", (org_row[0],))
+            
         # Vincular personal existente al servicio 1 si no tienen servicio
         conn.execute("UPDATE personal SET servicio_id = 1 WHERE servicio_id IS NULL")
+
+        # Migración de personal_puestos: Popular la tabla en base a rol y categoría actuales
+        # Para que no se rompa la lógica si la tabla está vacía
+        try:
+            empleados_migrar = conn.execute("SELECT nombre, rol, categoria, servicio_id FROM personal").fetchall()
+            puestos_db = conn.execute("SELECT id, nombre, servicio_id FROM puestos").fetchall()
+            
+            puestos_map = {} # (servicio_id, nombre_puesto) -> puesto_id
+            for p_id, p_nom, p_serv in puestos_db:
+                puestos_map[(p_serv, p_nom)] = p_id
+            
+            for emp_nombre, emp_rol, emp_cat, emp_serv in empleados_migrar:
+                puestos_a_asignar = []
+                # Reglas heurísticas de migración
+                if emp_serv == 1: # Kinesiologia
+                    if emp_cat == 'Ambos':
+                        puestos_a_asignar.extend(['UTI', 'UCO'])
+                    elif emp_rol == 'UTI':
+                        puestos_a_asignar.append('UTI')
+                    elif emp_rol == 'UCO':
+                        puestos_a_asignar.append('UCO')
+                    elif emp_rol == 'General':
+                        puestos_a_asignar.append('General')
+                    elif emp_rol == 'Especial':
+                        puestos_a_asignar.append('Especial')
+                    else:
+                        # Fallback: intentar mapear el rol directo
+                        puestos_a_asignar.append(emp_rol)
+                elif emp_serv == 2: # Enfermeria
+                    if emp_rol == 'Rotativo':
+                        puestos_a_asignar.append('UTI')
+                    else:
+                        puestos_a_asignar.append(emp_rol)
+                else:
+                    # Otros servicios (Medicos, Monitoreo): el rol suele coincidir con el puesto
+                    puestos_a_asignar.append(emp_rol)
+                
+                for p_nom in puestos_a_asignar:
+                    p_id = puestos_map.get((emp_serv, p_nom))
+                    if p_id:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO personal_puestos (personal_nombre, puesto_id) VALUES (?, ?)", 
+                            (emp_nombre, p_id)
+                        )
+        except Exception as e:
+            print(f"Error en migración automática de personal_puestos: {e}")
 
 def inicializar_datos_wfm():
     """Puebla las tablas de la nueva arquitectura WFM con los datos base provistos por el usuario."""
@@ -340,6 +556,40 @@ def inicializar_datos_wfm():
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (servicio_id, nom, hi, hs, d_sem, p_id, ordn))
 
+        # 4. Asegurar Puestos y Turnos para Personal de Monitoreo (Organizacion 2, Servicio 1)
+        monit_row = conn.execute("SELECT id FROM servicios WHERE nombre = 'Personal de Monitoreo'").fetchone()
+        if monit_row:
+            monit_serv_id = monit_row[0]
+            
+            # Asegurar puestos
+            conn.execute("INSERT OR IGNORE INTO puestos (servicio_id, nombre) VALUES (?, 'Supervisor')", (monit_serv_id,))
+            conn.execute("INSERT OR IGNORE INTO puestos (servicio_id, nombre) VALUES (?, 'Monitorista')", (monit_serv_id,))
+            
+            p_sup = conn.execute("SELECT id FROM puestos WHERE nombre='Supervisor' AND servicio_id=?", (monit_serv_id,)).fetchone()[0]
+            p_mon = conn.execute("SELECT id FROM puestos WHERE nombre='Monitorista' AND servicio_id=?", (monit_serv_id,)).fetchone()[0]
+            
+            monit_turnos = [
+                ('00-06_Supervisor', '00:00', 6, '0,1,2,3,4,5,6', p_sup, 1),
+                ('06-12_Supervisor', '06:00', 6, '0,1,2,3,4,5,6', p_sup, 2),
+                ('12-18_Supervisor', '12:00', 6, '0,1,2,3,4,5,6', p_sup, 3),
+                ('18-24_Supervisor', '18:00', 6, '0,1,2,3,4,5,6', p_sup, 4),
+                ('00-06_Monitorista', '00:00', 6, '0,1,2,3,4,5,6', p_mon, 5),
+                ('06-12_Monitorista', '06:00', 6, '0,1,2,3,4,5,6', p_mon, 6),
+                ('12-18_Monitorista', '12:00', 6, '0,1,2,3,4,5,6', p_mon, 7),
+                ('18-24_Monitorista', '18:00', 6, '0,1,2,3,4,5,6', p_mon, 8),
+            ]
+            for nom, hi, hs, d_sem, p_id, ordn in monit_turnos:
+                conn.execute("""
+                    UPDATE turnos_config 
+                    SET hora_inicio = ?, horas = ?, dias_semana = ?, puesto_id = ?, orden = ?, activo = 1
+                    WHERE nombre = ? AND servicio_id = ?
+                """, (hi, hs, d_sem, p_id, ordn, nom, monit_serv_id))
+                
+                conn.execute("""
+                    INSERT OR IGNORE INTO turnos_config (servicio_id, nombre, hora_inicio, horas, dias_semana, puesto_id, orden, activo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                """, (monit_serv_id, nom, hi, hs, d_sem, p_id, ordn))
+
 def inicializar_catalogo_reglas():
     """Puebla la tabla reglas_catalogo con las reglas base del sistema."""
     reglas_base = [
@@ -349,8 +599,7 @@ def inicializar_catalogo_reglas():
         ('EXCLUIR_TURNOS', 'HARD', 'Prohibición explícita de ciertos turnos para una persona'),
         ('ASIGNACION_FIJA', 'HARD', 'Fuerza a la persona a un turno específico en días específicos'),
         ('MIN_TURNOS', 'HARD', 'Limite minimo de un tipo de turno especifico por bloque semanal. JSON: [{"turno": "Mañana_UTI", "min_por_semana": 4}]'),
-        ('MAX_TURNOS', 'HARD', 'Limite maximo de un tipo de turno especifico por bloque semanal. JSON: [{"turno": "Noche", "max_por_semana": 2}]'),
-        ('PESO_EQUIDAD_FINDES', 'SOFT', 'Peso de penalización por exceder findes semanales'),
+        ('MAX_TURNOS', 'HARD', 'Limite maximo de un grupo de turnos por semana o mes. JSON: [{"turnos": ["Dia_UTI", "Noche"], "max_por_mes": 1}]'),
         ('PESO_BRECHA_ANUAL', 'SOFT', 'Peso de penalización por diferencia de horas anuales'),
         ('PESO_BRECHA_MENSUAL', 'SOFT', 'Peso de penalización por diferencia de horas en el mes'),
         ('PESO_BRECHA_SEG', 'SOFT', 'Peso de penalización por diferencia de seguimientos'),
@@ -369,7 +618,19 @@ def inicializar_catalogo_reglas():
         ('PESO_EQUIDAD_FINDES_MENSUAL_CALENDARIO', 'SOFT', 'Peso de penalización por desigualdad de findes en mes calendario'),
         ('LIMITES_SOFT_RULES', 'SOFT', 'Límites base para dimensionar el solver (Semanas_Base, Min_Horas, Max_Horas_Limite, etc)'),
         ('MAX_HORAS_MES_CALENDARIO', 'HARD', 'Límite máximo estricto de horas a trabajar por mes calendario. JSON: {"max_horas": 144}'),
-        ('DESCANSO_ENTRE_TURNOS', 'HARD', 'Horas mínimas de descanso entre el fin de un turno y el comienzo del siguiente. JSON: {"horas": 12}')
+        ('DESCANSO_ENTRE_TURNOS', 'HARD', 'Horas mínimas de descanso entre el fin de un turno y el comienzo del siguiente. JSON: {"horas": 12}'),
+        ('FRANCO_FORZADO', 'HARD', 'Fuerza un día libre para la persona en una fecha o rango de fechas concreto. Se configura via personal_reglas_ajustes con accion=SOBRESCRIBIR. No necesita parametros adicionales. Ej: accion=SOBRESCRIBIR, fecha_inicio=2026-06-10, fecha_fin=2026-06-10, parametros_json={}'),
+        ('ASIGNACION_FIJA', 'HARD', 'Fuerza a la persona a un turno específico. Soporta dia-de-semana: [{"Dia":"Lunes","Turno":"Mañana_UTI"}] y fecha puntual: [{"Fecha":"2026-06-15","Turno":"Tarde_UCO"}]. Gestionable via personal_reglas o personal_reglas_ajustes.'),
+        ('PATRON_CICLICO', 'HARD', 'Patrón cíclico estricto de X días de trabajo seguidos de Y días de franco. JSON: {"trabajo": 10, "franco": 4}'),
+        ('PESO_BRECHA_DIARIA_PERSONAL', 'SOFT', 'Peso de penalización por diferencia de personal asignado por día y puesto/turno'),
+        ('MIN_FINDES_MES', 'HARD', 'Asegura que el personal tenga al menos N fines de semana trabajados en el mes.'),
+        ('EXACTO_FINDES_MES', 'HARD', 'Asegura que el personal tenga exactamente N fines de semana trabajados en el mes.'),
+        ('MIN_DIA_ESPECIFICO_MES', 'HARD', 'Asegura que el personal trabaje al menos N veces un dia de la semana especifico en el mes. JSON: {"dia_semana": "Viernes", "min_dias": 1}'),
+        ('EXACTO_DIA_ESPECIFICO_MES', 'HARD', 'Asegura que el personal trabaje exactamente N veces un dia de la semana especifico en el mes. JSON: {"dia_semana": "Viernes", "exacto_dias": 1}'),
+        ('FINDES_COMPLETOS_Y_MEDIOS', 'HARD', 'Asegura la cantidad exacta de fines de semana completos y medios trabajados según la disponibilidad. JSON: {"por_disponibilidad": {"4": {"completos": 2, "medios": 1}}}'),
+        ('PESO_EQUIDAD_FERIADOS', 'SOFT', 'Peso de penalización por desigualdad en feriados trabajados anuales'),
+        ('PENALIZACION_PUESTO_NO_PREFERIDO', 'SOFT', 'Penaliza cuando una persona es asignada a un turno de un puesto que NO es su puesto primario (según personal_puestos.es_primario). Útil para desincentivar que residentes cubran puestos de planta. JSON: {"peso": 500}'),
+        ('PENALIZACION_TURNO', 'SOFT', 'Penaliza la asignacion de un turno especifico a una persona, con un peso configurable. Soporta lista de items. JSON: [{"turno": "N_Planta", "peso": 200, "solo_finde": false}]'),
     ]
     with get_connection() as conn:
         for codigo, tipo, desc in reglas_base:
@@ -401,10 +662,28 @@ def obtener_personal_db(servicio_id):
     """Retorna la lista de personal para un servicio específico."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT nombre, rol FROM personal WHERE servicio_id = ? ORDER BY nombre", 
+            "SELECT nombre, rol, categoria FROM personal WHERE servicio_id = ? AND COALESCE(activo, 1) = 1 ORDER BY nombre", 
             (servicio_id,)
         ).fetchall()
-    return [{'Nombre': r[0], 'Rol': r[1]} for r in rows]
+        
+        # Obtener puestos habilitados (todos) y cuáles son primarios
+        puestos_rows = conn.execute("""
+            SELECT pp.personal_nombre, p.nombre, COALESCE(pp.es_primario, 1) as es_primario
+            FROM personal_puestos pp
+            JOIN puestos p ON pp.puesto_id = p.id
+            WHERE p.servicio_id = ?
+        """, (servicio_id,)).fetchall()
+        
+        puestos_map = {}
+        puestos_primarios_map = {}
+        for p_nombre, p_puesto, es_prim in puestos_rows:
+            puestos_map.setdefault(p_nombre, set()).add(p_puesto)
+            if es_prim:
+                puestos_primarios_map.setdefault(p_nombre, set()).add(p_puesto)
+            
+    return [{'Nombre': r[0], 'Rol': r[1], 'Categoria': r[2],
+             'Puestos_Habilitados': list(puestos_map.get(r[0], [])),
+             'Puestos_Primarios': list(puestos_primarios_map.get(r[0], []))} for r in rows]
 
 def sincronizar_personal(df_personal):
     """Inserta o actualiza el personal en la tabla dimensional."""
@@ -504,21 +783,41 @@ def cargar_historial(df_personal, fecha_corte_str):
     return resultado
 
 
-def cargar_guardias_previas(fecha_inicio_str, dias_atras=7):
+def cargar_guardias_previas(fecha_inicio_str, dias_atras=28, servicio_id=None):
     """
-    Retorna las guardias asignadas en los últimos 'dias_atras' días antes de fecha_inicio_str.
+    Retorna las guardias asignadas del ULTIMO cronograma aprobado para este servicio.
     Devuelve dict: { nombre: [ { 'fecha': 'YYYY-MM-DD', 'turno': 'Noche', 'horas': 12 }, ... ] }
+    Ignora dias_atras para buscar directamente el ultimo bloque entero.
     """
-    from datetime import date, timedelta
-    fecha_ini = date.fromisoformat(fecha_inicio_str)
-    fecha_desde = (fecha_ini - timedelta(days=dias_atras)).isoformat()
-    
     with get_connection() as conn:
-        rows = conn.execute("""
-            SELECT nombre, fecha, turno, horas 
-            FROM guardias 
-            WHERE fecha >= ? AND fecha < ?
-        """, (fecha_desde, fecha_inicio_str)).fetchall()
+        # 1. Buscar el ID del ultimo cronograma aprobado
+        ultimo_cr_query = """
+            SELECT id FROM cronogramas
+            WHERE estado = 'aprobado' AND fecha_inicio < ?
+            ORDER BY fecha_inicio DESC
+            LIMIT 1
+        """
+        row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str]).fetchone()
+        
+        if not row_cr:
+            return {} # No hay cronogramas previos aprobados
+        
+        cronograma_id = row_cr[0]
+
+        # 2. Traer todas las guardias de ese cronograma
+        query = """
+            SELECT g.nombre, g.fecha, g.turno, g.horas 
+            FROM guardias g
+            JOIN personal p ON g.nombre = p.nombre
+            WHERE g.cronograma_id = ?
+        """
+        params = [cronograma_id]
+        
+        if servicio_id is not None:
+            query += " AND p.servicio_id = ?"
+            params.append(servicio_id)
+            
+        rows = conn.execute(query, params).fetchall()
         
     historial = {}
     for nombre, fecha, turno, horas in rows:
@@ -531,7 +830,7 @@ def cargar_guardias_previas(fecha_inicio_str, dias_atras=7):
 
 
 def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
-                       feriados_indices, offset_dia, dias_del_bloque, notas=""):
+                       feriados_indices, offset_dia, dias_del_bloque, notas="", df_cat_semanas=None):
     """
     Persiste un cronograma aceptado en la BD.
     Guarda: cabecera en cronogramas, cada guardia en guardias,
@@ -547,10 +846,9 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
     )
 
     with get_connection() as conn:
-        # 1. Cabecera
         cur = conn.execute("""
-            INSERT INTO cronogramas (fecha_inicio, fecha_fin, creado_en, notas)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO cronogramas (fecha_inicio, fecha_fin, creado_en, notas, estado)
+            VALUES (?, ?, ?, ?, 'borrador')
         """, (fecha_inicio, fecha_fin,
               datetime.now().isoformat(timespec='seconds'), notas))
         cronograma_id = cur.lastrowid
@@ -578,6 +876,14 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
                 INSERT INTO guardias (cronograma_id, nombre, fecha, turno, horas, es_finde)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (cronograma_id, nombre, fecha, turno, horas, es_finde))
+
+        # 4. Categorías semanales del solver
+        if df_cat_semanas is not None and not df_cat_semanas.empty:
+            for _, row in df_cat_semanas.iterrows():
+                conn.execute("""
+                    INSERT INTO semanas_categorias (cronograma_id, nombre, fecha_lunes, categoria)
+                    VALUES (?, ?, ?, ?)
+                """, (cronograma_id, row['Nombre'], row['Fecha_Lunes'], row['Categoria']))
 
     print(f"[OK] Cronograma guardado en BD (id={cronograma_id}): {fecha_inicio} -> {fecha_fin}")
     return cronograma_id
@@ -619,8 +925,8 @@ def insertar_licencia(nombre, tipo, fecha_inicio, fecha_fin):
     (mismo nombre, tipo, inicio y fin) la omite silenciosamente.
     """
     tipo = tipo.upper()
-    if tipo not in ('LPP', 'LAR'):
-        raise ValueError(f"Tipo de licencia inválido: '{tipo}'. Debe ser 'LPP' o 'LAR'.")
+    if tipo not in ('LPP', 'LAR', 'CM', 'LM'):
+        raise ValueError(f"Tipo de licencia inválido: '{tipo}'. Debe ser 'LPP', 'LAR', 'CM' o 'LM'.")
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO licencias (nombre, tipo, fecha_inicio, fecha_fin)
@@ -673,18 +979,16 @@ def cargar_reglas_servicio(servicio_id=1):
         
         # Reglas de organización
         rows_org = conn.execute("""
-            SELECT rc.codigo_regla, or_r.parametros_json
-            FROM organizaciones_reglas or_r
-            JOIN reglas_catalogo rc ON or_r.regla_id = rc.id
-            WHERE or_r.organizacion_id = ?
+            SELECT codigo_regla, parametros_json
+            FROM organizaciones_reglas
+            WHERE organizacion_id = ? AND activo = 1
         """, (org_id,)).fetchall()
         
         # Reglas de servicio
         rows_serv = conn.execute("""
-            SELECT rc.codigo_regla, sr.parametros_json
-            FROM servicios_reglas sr
-            JOIN reglas_catalogo rc ON sr.regla_id = rc.id
-            WHERE sr.servicio_id = ?
+            SELECT codigo_regla, parametros_json
+            FROM servicios_reglas
+            WHERE servicio_id = ? AND activo = 1
         """, (servicio_id,)).fetchall()
     
     reglas = {}
@@ -706,11 +1010,10 @@ def cargar_reglas_personal(servicio_id=1):
     """
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT pr.personal_nombre, rc.codigo_regla, pr.parametros_json
+            SELECT pr.personal_nombre, pr.codigo_regla, pr.parametros_json
             FROM personal_reglas pr
-            JOIN reglas_catalogo rc ON pr.regla_id = rc.id
             JOIN personal p ON pr.personal_nombre = p.nombre
-            WHERE p.servicio_id = ?
+            WHERE p.servicio_id = ? AND pr.activo = 1 AND COALESCE(p.activo, 1) = 1
         """, (servicio_id,)).fetchall()
     
     reglas = {}
@@ -841,14 +1144,14 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
 
         # 2. Cargar Demanda Base
         rows_demanda = conn.execute("""
-            SELECT dc.id, p.nombre as puesto, dc.tipo_dia, dc.hora_inicio, dc.hora_fin, dc.cantidad_min, dc.cantidad_max, dc.puesto_id
+            SELECT dc.id, p.nombre as puesto, dc.tipo_dia, dc.hora_inicio, dc.hora_fin, dc.cantidad_min, dc.cantidad_max, dc.puesto_id, dc.dias_semana
             FROM demanda_config dc
             JOIN puestos p ON dc.puesto_id = p.id
-            WHERE p.servicio_id = ?
+            WHERE p.servicio_id = ? AND dc.activo = 1
         """, (servicio_id,)).fetchall()
 
         demanda_req = {"Semana": [], "Finde_Feriado": []}
-        for d_id, puesto, t_dia, h_ini, h_fin, c_min, c_max, p_id in rows_demanda:
+        for d_id, puesto, t_dia, h_ini, h_fin, c_min, c_max, p_id, d_sem in rows_demanda:
             item = {
                 "id": d_id,
                 "puesto": puesto,
@@ -856,7 +1159,8 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
                 "hora_inicio": h_ini,
                 "hora_fin": h_fin,
                 "cantidad_min": c_min,
-                "cantidad_max": c_max
+                "cantidad_max": c_max,
+                "dias_semana": d_sem
             }
             demanda_req[t_dia].append(item)
 
@@ -868,7 +1172,7 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
                 FROM demanda_ajustes da
                 JOIN demanda_config dc ON da.demanda_config_id = dc.id
                 JOIN puestos p ON dc.puesto_id = p.id
-                WHERE p.servicio_id = ? 
+                WHERE p.servicio_id = ? AND da.activo = 1 AND dc.activo = 1
                   AND ((da.fecha_inicio BETWEEN ? AND ?) OR (da.fecha_fin BETWEEN ? AND ?))
             """, (servicio_id, fecha_inicio, fecha_fin, fecha_inicio, fecha_fin)).fetchall()
             

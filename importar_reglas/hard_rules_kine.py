@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from logic_helpers import TURNOS_SEMANA, TURNOS_FINDE
 import db as _db
 
-def _get_licencias(): return _db.LAR, _db.LPP
+def _get_licencias(): return _db.LAR, _db.LPP, _db.LM, _db.CM
 
 def aplicar_reglas_duras(modelo, turnos, df_personal, demanda_turnos, dias_del_bloque, feriados, offset_dia, num_semanas, fecha_inicio, turnos_config=None, reglas_hard=None):
     reglas_hard = reglas_hard or {}

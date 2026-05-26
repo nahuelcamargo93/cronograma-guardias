@@ -4,7 +4,7 @@ import database as _db
 
 def _get_licencias(): return _db.LAR, _db.LPP
 
-def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=1, flr_tracker=None, historial_semana_previa=None):
+def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=1, flr_tracker=None, historial_semana_previa=None, demanda_req=None, ajustes_demanda=None, vars_turno_sem=None):
     # Cargar el motor de reglas desde la BD
     reglas_servicio = _db.cargar_reglas_servicio(servicio_id)
     reglas_personal = _db.cargar_reglas_personal(servicio_id)
@@ -104,6 +104,7 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
             bloque_actual = []
     if len(bloque_actual) >= 3: bloques.append(bloque_actual)
 
+    ratios_finde_mes_dict = {}
     for emp in empleados:
         nombre = emp.nombre
         rol = emp.rol
@@ -116,10 +117,72 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
             for item in items:
                 t_a_penalizar = item.get('turno')
                 peso = item.get('peso', 100)
+                solo_semana = item.get('solo_semana', False)
+                solo_finde = item.get('solo_finde', False)
+                dias_validos = item.get('dias')
                 if t_a_penalizar:
                     for d in range(dias_del_bloque):
                         if (nombre, d, t_a_penalizar) in turnos:
-                            penalizaciones_ad_hoc.append(turnos[(nombre, d, t_a_penalizar)] * peso)
+                            aplica = True
+                            if solo_semana and es_descanso[d]:
+                                aplica = False
+                            if solo_finde and not es_descanso[d]:
+                                aplica = False
+                            if dias_validos is not None:
+                                dia_sem = (d + offset_dia) % 7
+                                if dia_sem not in dias_validos:
+                                    aplica = False
+                            if aplica:
+                                penalizaciones_ad_hoc.append(turnos[(nombre, d, t_a_penalizar)] * peso)
+
+        # Penalización por asignación a puesto no preferido (vía DB)
+        # Aplica cuando la persona tiene puestos_primarios definidos y se le asigna
+        # un turno de un puesto que NO es su primario (ej: residente cubriendo Planta)
+        params_penal_puesto = rule_engine.resolver_parametros_regla(
+            'PENALIZACION_PUESTO_NO_PREFERIDO', nombre, FECHA_INICIO,
+            reglas_servicio, emp.reglas, ajustes_personal
+        )
+        if rule_engine.regla_existe(params_penal_puesto) and emp.puestos_primarios:
+            peso_puesto = params_penal_puesto.get('peso', 500) if isinstance(params_penal_puesto, dict) else 500
+            priorizar_cat = params_penal_puesto.get('priorizar_categoria') if isinstance(params_penal_puesto, dict) else None
+            
+            multiplicador = 1
+            if priorizar_cat in ('asc', 'desc'):
+                # Intentar obtener el valor numérico de la categoría del empleado actual
+                try:
+                    val_cat = int(emp.categoria)
+                except (ValueError, TypeError):
+                    val_cat = None
+                
+                if val_cat is not None:
+                    # Buscar las categorías de otros empleados con el mismo rol en este servicio
+                    cats = []
+                    for e in empleados:
+                        if e.rol == emp.rol:
+                            try:
+                                cats.append(int(e.categoria))
+                            except (ValueError, TypeError):
+                                pass
+                    if cats:
+                        max_cat = max(cats)
+                        min_cat = min(cats)
+                        if priorizar_cat == 'desc':
+                            multiplicador = max_cat - val_cat + 1
+                        elif priorizar_cat == 'asc':
+                            multiplicador = val_cat - min_cat + 1
+
+            # Iterar sobre todos los turnos posibles de este empleado
+            for (n, d, t_nombre), var_turno in turnos.items():
+                if n != nombre:
+                    continue
+                # Obtener el puesto asociado a este turno (via turnos_dict)
+                turno_obj = turnos_dict.get(t_nombre)
+                if turno_obj is None:
+                    continue
+                puesto_del_turno = turno_obj.puesto_nombre
+                # Penalizar si el puesto del turno NO está entre los puestos primarios
+                if puesto_del_turno and puesto_del_turno not in emp.puestos_primarios:
+                    penalizaciones_ad_hoc.append(var_turno * (peso_puesto * multiplicador))
 
         horas_mes = []
         semanas_seg_persona = []
@@ -372,6 +435,7 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
         else:
             modelo.Add(ratio_finde_mes == 0)
             
+        ratios_finde_mes_dict[nombre] = ratio_finde_mes
         params_findes_mes = rule_engine.resolver_parametros_regla(
             'PESO_EQUIDAD_FINDES_MENSUAL', nombre, FECHA_INICIO, 
             reglas_servicio, reglas_personal, ajustes_personal
@@ -727,6 +791,28 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
     brecha_ratio_finde_mes = modelo.NewIntVar(0, 1000, 'brecha_ratio_finde_mes')
     modelo.Add(brecha_ratio_finde_mes == max_ratio_finde_mes - min_ratio_finde_mes)
     
+    difs_parejas = []
+    params_globales_findes_mes = reglas_servicio.get('PESO_EQUIDAD_FINDES_MENSUAL', {})
+    peso_ratio_finde_mes = params_globales_findes_mes.get('peso', 500) if isinstance(params_globales_findes_mes, dict) else 500
+    if peso_ratio_finde_mes > 0 and len(empleados) > 1:
+        import re
+        for i in range(len(empleados)):
+            for j in range(i + 1, len(empleados)):
+                emp1 = empleados[i]
+                emp2 = empleados[j]
+                p1 = set(emp1.puestos_habilitados or [emp1.rol])
+                p2 = set(emp2.puestos_habilitados or [emp2.rol])
+                if p1.intersection(p2):
+                    n1 = emp1.nombre
+                    n2 = emp2.nombre
+                    if n1 in ratios_finde_mes_dict and n2 in ratios_finde_mes_dict:
+                        n1_clean = re.sub(r'[^a-zA-Z0-9_]', '', n1.replace(" ", "_"))
+                        n2_clean = re.sub(r'[^a-zA-Z0-9_]', '', n2.replace(" ", "_"))
+                        diff_var = modelo.NewIntVar(0, 1000, f'diff_ratio_{n1_clean}_{n2_clean}')
+                        modelo.Add(diff_var >= ratios_finde_mes_dict[n1] - ratios_finde_mes_dict[n2])
+                        modelo.Add(diff_var >= ratios_finde_mes_dict[n2] - ratios_finde_mes_dict[n1])
+                        difs_parejas.append(diff_var)
+                        
     brecha_ratio_finde_anual = modelo.NewIntVar(0, 1000, 'brecha_ratio_finde_anual')
     modelo.Add(brecha_ratio_finde_anual == max_ratio_finde_anual - min_ratio_finde_anual)
 
@@ -799,7 +885,8 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
         sum(penalizaciones_ad_hoc) +
         sum(puntos_objetivo_rotacion) +
         sum(puntos_diversidad) - 
-        sum(puntos_bonus)
+        sum(puntos_bonus) +
+        (sum(difs_parejas) * (peso_ratio_finde_mes // 100) if difs_parejas else 0)
     )
     return global_vars_turno_sem
 

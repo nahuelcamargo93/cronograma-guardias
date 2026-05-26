@@ -65,7 +65,7 @@ def generar_reporte():
     # 6. Calcular Horas Disponibles (Capacidad teórica)
     try:
         import json
-        regla_hs = conn.execute("SELECT parametros_json FROM servicios_reglas sr JOIN reglas_catalogo rc ON sr.regla_id = rc.id WHERE rc.codigo_regla = 'MAX_HORAS_SEMANA'").fetchone()
+        regla_hs = conn.execute("SELECT parametros_json FROM servicios_reglas WHERE codigo_regla = 'MAX_HORAS_SEMANA'").fetchone()
         max_hs_semana = json.loads(regla_hs[0])['limite'] if regla_hs else 36
     except:
         max_hs_semana = 36

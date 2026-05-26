@@ -20,7 +20,7 @@ def diagnostic_monday():
     
     print("\n--- EXCLUSIONES DE LOS DISPONIBLES ---")
     for p in disp_lunes:
-        excl = pd.read_sql("SELECT parametros_json FROM personal_reglas WHERE personal_nombre = ? AND regla_id = 4", conn, params=(p,))
+        excl = pd.read_sql("SELECT parametros_json FROM personal_reglas WHERE personal_nombre = ? AND codigo_regla = 'EXCLUIR_TURNOS'", conn, params=(p,))
         if not excl.empty:
             print(f"{p}: {excl.iloc[0]['parametros_json']}")
         else:

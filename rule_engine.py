@@ -52,11 +52,14 @@ def resolver_parametros_regla(
 
     # ─── 2. REGLA PERSONAL ────────────────────────────────────────────────────
     # Configuración individual que no tiene límite de tiempo.
-    # (cargar_reglas_personal devuelve listas; tomamos la primera si aplica)
     if codigo_regla in reglas_personal:
         valor = reglas_personal[codigo_regla]
-        # Si la regla personal es una lista de dicts (ej. EXCLUIR_TURNOS), la devolvemos tal cual.
-        # Si es un dict simple, también.
+        # Si es una lista y la regla espera un dict simple, tomamos el primer elemento
+        if isinstance(valor, list) and codigo_regla not in (
+            'EXCLUIR_TURNOS', 'MAX_TURNOS', 'MIN_TURNOS', 'ASIGNACION_FIJA',
+            'PENALIZACION_TURNO', 'TURNOS_PREFERENCIALES'
+        ):
+            return valor[0] if len(valor) > 0 else {}
         return valor
 
     # ─── 3. REGLA DE SERVICIO / ORGANIZACIÓN ─────────────────────────────────

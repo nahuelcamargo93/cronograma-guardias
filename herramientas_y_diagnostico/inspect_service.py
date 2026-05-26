@@ -14,10 +14,9 @@ print(pd.read_sql_query("SELECT * FROM turnos_config WHERE servicio_id = 2", con
 
 print("\n--- REGLAS SERVICIO (SERVICIO 2) ---")
 print(pd.read_sql_query("""
-    SELECT rc.codigo_regla, sr.parametros_json 
-    FROM servicios_reglas sr 
-    JOIN reglas_catalogo rc ON sr.regla_id = rc.id 
-    WHERE sr.servicio_id = 2
+    SELECT codigo_regla, parametros_json 
+    FROM servicios_reglas 
+    WHERE servicio_id = 2
 """, conn))
 
 conn.close()

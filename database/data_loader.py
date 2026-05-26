@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 def get_dias_licencia(nombre: str, fecha_inicio_dt: date, dias_del_bloque: int) -> set:
     bloqueados = set()
-    for licencias in (q.LAR, q.LPP, q.LM):
+    for licencias in (q.LAR, q.LPP, q.LM, q.CM):
         for (lic_ini_str, lic_fin_str) in licencias.get(nombre, []):
             lic_ini = date.fromisoformat(lic_ini_str)
             lic_fin = date.fromisoformat(lic_fin_str)
@@ -42,6 +42,7 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
         emp = Empleado(
             nombre=nombre,
             rol=row.get('Rol', ''),
+            categoria=row.get('Categoria'),
             servicio_id=servicio_id,
             fecha_cumpleanos=row.get('fecha_cumpleanos'),
             es_madre=bool(row.get('es_madre', 0)),
@@ -52,8 +53,11 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
             findes_habiles_previos=hist.get('Findes_Habiles_Previos', 0),
             findes_largos_3_previos=hist.get('Findes_Largos_3_Previos', 0),
             findes_largos_4_previos=hist.get('Findes_Largos_4_Previos', 0),
+            feriados_previos=hist.get('Feriados_Previos', 0),
             horas_fijas_semanales=horas_fijas,
             dias_licencia=get_dias_licencia(nombre, fecha_inicio_dt, dias_del_bloque),
+            puestos_habilitados=set(row.get('Puestos_Habilitados', [])),
+            puestos_primarios=set(row.get('Puestos_Primarios', [])),
             reglas=reglas,
             horas_mensuales_reglamentarias=row.get('horas_mensuales_reglamentarias'),
             fecha_inicio_historial=hist.get('Fecha_Inicio_Historial')

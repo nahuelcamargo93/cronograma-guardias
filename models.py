@@ -20,6 +20,7 @@ class Turno:
 class Empleado:
     nombre: str
     rol: str
+    categoria: Optional[str] = None
     servicio_id: Optional[int] = None
     fecha_cumpleanos: Optional[str] = None
     es_madre: bool = False
@@ -32,11 +33,18 @@ class Empleado:
     findes_habiles_previos: int = 0
     findes_largos_3_previos: int = 0
     findes_largos_4_previos: int = 0
+    feriados_previos: int = 0
     horas_fijas_semanales: int = 0
     seguimientos_previos: int = 0
     
     # Días (índices 0..DIAS_DEL_BLOQUE) en los que está de licencia (LPP/LAR)
     dias_licencia: Set[int] = field(default_factory=set)
+
+    # Puestos que la persona puede cubrir
+    puestos_habilitados: Set[str] = field(default_factory=set)
+    
+    # Puestos que la persona cubre preferentemente (es_primario=1 en personal_puestos)
+    puestos_primarios: Set[str] = field(default_factory=set)
 
     # Reglas específicas de la BD para este empleado
     reglas: Dict[str, Any] = field(default_factory=dict)

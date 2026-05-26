@@ -1,0 +1,2 @@
+39	2	175	{"peso": 1000, "objetivo": 1}	175	OBJETIVO_ROTACION_MENSUAL	SOFT	Penaliza desviaciones del objetivo ideal de semanas por turno (ej. 1 de cada uno)
+35	2	171	{"peso": 1000}	171	PESO_EQUIDAD_TIPO_TURNO	SOFT	Peso para PESO_EQUIDAD_TIPO_TURNO

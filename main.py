@@ -37,9 +37,14 @@ def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajuste
                 t_info = turnos_dict.get(t)
                 puesto_nombre_turno = t_info.puesto_nombre if t_info else None
                 
-                if puesto_nombre_turno and rol_persona:
-                    if rol_persona != puesto_nombre_turno:
-                        continue # No coincide el rol con el puesto
+                if puesto_nombre_turno:
+                    if emp.puestos_habilitados:
+                        if puesto_nombre_turno not in emp.puestos_habilitados:
+                            continue # El empleado no está habilitado para cubrir este puesto
+                    else:
+                        # Fallback por compatibilidad
+                        if rol_persona and rol_persona != "Rotativo" and rol_persona != puesto_nombre_turno:
+                            continue
                 
                 turnos[(nombre, dia, t)] = modelo.NewBoolVar(f'turno_{nombre}_dia{dia}_{t}')
     
@@ -52,7 +57,13 @@ def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajuste
                 )
                 if _re.regla_existe(params) and isinstance(params, list):
                     for asig in params:
-                        if mapa_dias.get(asig.get('Dia')) == dia_semana:
+                        # Soporta día de semana: {"Dia": "Lunes", "Turno": "Mañana_UTI"}
+                        # Y fecha puntual:       {"Fecha": "2026-06-15", "Turno": "Tarde_UCO"}
+                        fecha_asig = asig.get('Fecha')
+                        dia_asig   = asig.get('Dia')
+                        match = (fecha_asig and fecha_asig == fecha_dia_str) or \
+                                (dia_asig and mapa_dias.get(dia_asig) == dia_semana)
+                        if match:
                             turno_config = asig['Turno'].replace(" ", "_")
                             vars_coincidentes = [
                                 turnos[(nombre, dia, t)] for t in lista_turnos
@@ -66,14 +77,15 @@ def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajuste
             if vars_dia:
                 modelo.Add(sum(vars_dia) <= 1)
 
-    aplicar_reglas_duras(modelo, turnos, empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, historial_semana_previa, reglas_servicio, ajustes_reglas_personal, servicio_id)
-    vars_turno_sem = aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id, flr_tracker, historial_semana_previa)
+    vars_turno_sem = aplicar_reglas_duras(modelo, turnos, empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, historial_semana_previa, reglas_servicio, ajustes_reglas_personal, servicio_id)
+    vars_turno_sem = aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id, flr_tracker, historial_semana_previa, demanda_req=demanda_req, ajustes_demanda=ajustes_demanda, vars_turno_sem=vars_turno_sem)
     
     return modelo, turnos, flr_tracker, vars_turno_sem
 
-def resolver_modelo(modelo, turnos, flr_tracker, empleados, dias_del_bloque, feriados, fecha_inicio, offset_dia, config_turnos, vars_turno_sem=None):
+def resolver_modelo(modelo, turnos, flr_tracker, empleados, dias_del_bloque, feriados, fecha_inicio, offset_dia, config_turnos, vars_turno_sem=None, max_time_in_seconds=400):
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 300
+    solver.parameters.max_time_in_seconds = max_time_in_seconds
+
     solver.parameters.num_search_workers = 8 # Utilizar múltiples núcleos
     solver.parameters.log_search_progress = True
     
@@ -177,7 +189,7 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas=""):
     empleados = obtener_empleados(servicio_id, fecha_inicio, DIAS_DEL_BLOQUE)
     turnos_dict = obtener_turnos(servicio_id)
     
-    historial_semana_previa = db_queries.cargar_guardias_previas(fecha_inicio, dias_atras=7)
+    historial_semana_previa = db_queries.cargar_guardias_previas(fecha_inicio, dias_atras=28, servicio_id=servicio_id)
 
     offset_dia = fecha_inicio_dt.weekday()
     
@@ -204,10 +216,29 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas=""):
             df_resultados, df_personal,
             fecha_inicio, fecha_fin,
             feriados_indices, offset_dia, DIAS_DEL_BLOQUE,
-            notas=notas
+            notas=notas,
+            df_cat_semanas=df_cat_semanas
         )
         if flrs_asignados:
             db_queries.guardar_flrs_asignados(cronograma_id, flrs_asignados)
+            
+        # --- GENERACIÓN DE REPORTE EXCEL ---
+        try:
+            if servicio_id == 1:
+                from reportes.kinesiologia import generar_y_exportar as gen_kin
+                gen_kin(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, crono_id=cronograma_id)
+            elif servicio_id == 2:
+                from reportes.enfermeria import generar_y_exportar as gen_enf
+                gen_enf(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, flrs_asignados, df_cat_semanas, crono_id=cronograma_id)
+            elif servicio_id == 3:
+                from reportes.medicos import generar_y_exportar as gen_med
+                gen_med(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, flrs_asignados, df_cat_semanas, crono_id=cronograma_id)
+            elif servicio_id == 4:
+                from reportes.com import generar_y_exportar as gen_com
+                gen_com(df_resultados, df_personal, DIAS_DEL_BLOQUE, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, crono_id=cronograma_id)
+            print(f"[OK] Reporte Excel generado para Servicio {servicio_id}")
+        except Exception as e:
+            print(f"[ERROR] Error al generar reporte Excel: {e}")
             
         return {"status": "success", "cronograma_id": cronograma_id}
     else:

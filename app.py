@@ -52,10 +52,22 @@ async def get_servicios(org_id: int):
         rows = conn.execute("SELECT * FROM servicios WHERE organizacion_id = ?", (org_id,)).fetchall()
         return [dict(row) for row in rows]
 
+@app.get("/api/cronogramas")
+async def get_todos_cronogramas():
+    """Devuelve todos los cronogramas con el nombre del servicio asociado."""
+    with get_db_conn() as conn:
+        rows = conn.execute("""
+            SELECT DISTINCT c.*, s.nombre as servicio_nombre, s.id as servicio_id, s.organizacion_id
+            FROM cronogramas c
+            JOIN guardias g ON g.cronograma_id = c.id
+            JOIN personal p ON g.nombre = p.nombre
+            JOIN servicios s ON p.servicio_id = s.id
+            ORDER BY c.fecha_inicio DESC
+        """).fetchall()
+        return [dict(row) for row in rows]
+
 @app.get("/api/cronogramas/{servicio_id}")
 async def get_cronogramas_historial(servicio_id: int):
-    # Nota: La tabla cronogramas no tiene servicio_id directamente, pero las guardias sí están ligadas a personal de un servicio.
-    # Por ahora, listaremos todos y filtraremos si es necesario.
     with get_db_conn() as conn:
         rows = conn.execute("""
             SELECT DISTINCT c.* 
@@ -67,6 +79,63 @@ async def get_cronogramas_historial(servicio_id: int):
         """, (servicio_id,)).fetchall()
         return [dict(row) for row in rows]
 
+@app.get("/api/cronograma_activo/{servicio_id}")
+async def get_cronograma_activo(servicio_id: int):
+    """Obtiene el último cronograma APROBADO para el servicio."""
+    with get_db_conn() as conn:
+        row = conn.execute("""
+            SELECT DISTINCT c.* 
+            FROM cronogramas c
+            JOIN guardias g ON g.cronograma_id = c.id
+            JOIN personal p ON g.nombre = p.nombre
+            WHERE p.servicio_id = ? AND c.estado = 'aprobado'
+            ORDER BY c.fecha_inicio DESC, c.id DESC
+            LIMIT 1
+        """, (servicio_id,)).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+@app.post("/api/aprobar/{cronograma_id}")
+async def aprobar_cronograma(cronograma_id: int):
+    """Establece un cronograma como APROBADO y los demás del mismo servicio a BORRADOR."""
+    with get_db_conn() as conn:
+        row = conn.execute("""
+            SELECT DISTINCT p.servicio_id 
+            FROM guardias g
+            JOIN personal p ON g.nombre = p.nombre
+            WHERE g.cronograma_id = ?
+            LIMIT 1
+        """, (cronograma_id,)).fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="No se encontró servicio para este cronograma")
+        
+        servicio_id = row['servicio_id']
+        
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            other_rows = conn.execute("""
+                SELECT DISTINCT c.id
+                FROM cronogramas c
+                JOIN guardias g ON g.cronograma_id = c.id
+                JOIN personal p ON g.nombre = p.nombre
+                WHERE p.servicio_id = ? AND c.id != ?
+            """, (servicio_id, cronograma_id)).fetchall()
+            
+            other_ids = [r['id'] for r in other_rows]
+            if other_ids:
+                placeholders = ",".join("?" for _ in other_ids)
+                conn.execute(f"UPDATE cronogramas SET estado = 'borrador' WHERE id IN ({placeholders})", other_ids)
+            
+            conn.execute("UPDATE cronogramas SET estado = 'aprobado' WHERE id = ?", (cronograma_id,))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=f"Error al aprobar: {str(e)}")
+            
+        return {"status": "success", "message": f"Cronograma #{cronograma_id} aprobado"}
+
 @app.get("/api/cronograma/{cronograma_id}")
 async def get_cronograma_detalle(cronograma_id: int):
     with get_db_conn() as conn:
@@ -75,20 +144,60 @@ async def get_cronograma_detalle(cronograma_id: int):
             raise HTTPException(status_code=404, detail="Cronograma no encontrado")
         
         guardias = conn.execute("""
-            SELECT g.*, p.rol 
+            SELECT g.id, g.cronograma_id, g.nombre, g.fecha, g.turno, g.horas, g.es_finde,
+                   p.rol, p.servicio_id,
+                   COALESCE(pu.nombre, p.rol) as puesto
             FROM guardias g
             JOIN personal p ON g.nombre = p.nombre
+            LEFT JOIN turnos_config tc ON tc.servicio_id = p.servicio_id AND tc.nombre = g.turno
+            LEFT JOIN puestos pu ON tc.puesto_id = pu.id
             WHERE g.cronograma_id = ?
-            ORDER BY g.fecha, g.turno
+            ORDER BY g.fecha, pu.nombre, g.nombre
         """, (cronograma_id,)).fetchall()
+        
+        serv_row = conn.execute("""
+            SELECT DISTINCT p.servicio_id FROM guardias g 
+            JOIN personal p ON g.nombre = p.nombre 
+            WHERE g.cronograma_id = ? LIMIT 1
+        """, (cronograma_id,)).fetchone()
+        
+        puestos = []
+        if serv_row:
+            puestos = conn.execute(
+                "SELECT id, nombre FROM puestos WHERE servicio_id = ? ORDER BY id",
+                (serv_row[0],)
+            ).fetchall()
         
         bloques = conn.execute("SELECT * FROM bloques_finde_largo WHERE cronograma_id = ?", (cronograma_id,)).fetchall()
         
         return {
             "metadata": dict(cronograma),
             "guardias": [dict(g) for g in guardias],
+            "puestos": [dict(p) for p in puestos],
             "bloques_finde": [dict(b) for b in bloques]
         }
+
+@app.get("/api/licencias/{servicio_id}")
+async def get_licencias_servicio(servicio_id: int, desde: str = None, hasta: str = None):
+    """Licencias del personal de un servicio, filtradas por rango de fechas opcional."""
+    with get_db_conn() as conn:
+        if desde and hasta:
+            rows = conn.execute("""
+                SELECT l.nombre, l.tipo, l.fecha_inicio, l.fecha_fin
+                FROM licencias l
+                JOIN personal p ON l.nombre = p.nombre
+                WHERE p.servicio_id = ? AND l.fecha_inicio <= ? AND l.fecha_fin >= ?
+                ORDER BY l.nombre, l.fecha_inicio
+            """, (servicio_id, hasta, desde)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT l.nombre, l.tipo, l.fecha_inicio, l.fecha_fin
+                FROM licencias l
+                JOIN personal p ON l.nombre = p.nombre
+                WHERE p.servicio_id = ?
+                ORDER BY l.nombre, l.fecha_inicio
+            """, (servicio_id,)).fetchall()
+    return [dict(r) for r in rows]
 
 @app.get("/api/reglas/{servicio_id}")
 async def get_reglas_servicio(servicio_id: int):
@@ -130,17 +239,15 @@ async def get_reglas_catalogo(servicio_id: int):
         
         # Reglas activas para este servicio
         activas_serv = {r[0] for r in conn.execute("""
-            SELECT rc.codigo_regla FROM servicios_reglas sr
-            JOIN reglas_catalogo rc ON sr.regla_id = rc.id
-            WHERE sr.servicio_id = ?
+            SELECT codigo_regla FROM servicios_reglas
+            WHERE servicio_id = ?
         """, (servicio_id,)).fetchall()}
         
         # Reglas activas por organización
         org_id = conn.execute("SELECT organizacion_id FROM servicios WHERE id = ?", (servicio_id,)).fetchone()[0]
         activas_org = {r[0] for r in conn.execute("""
-            SELECT rc.codigo_regla FROM organizaciones_reglas or_r
-            JOIN reglas_catalogo rc ON or_r.regla_id = rc.id
-            WHERE or_r.organizacion_id = ?
+            SELECT codigo_regla FROM organizaciones_reglas
+            WHERE organizacion_id = ?
         """, (org_id,)).fetchall()}
 
     activas = activas_serv | activas_org
@@ -154,6 +261,18 @@ async def get_reglas_catalogo(servicio_id: int):
             "activa": row[1] in activas
         })
     return resultado
+
+@app.get("/api/personal/{servicio_id}")
+async def get_personal_servicio(servicio_id: int):
+    """Devuelve la lista completa de personal para un servicio, con todos sus campos."""
+    with get_db_conn() as conn:
+        rows = conn.execute("""
+            SELECT nombre, categoria, rol, fecha_cumpleanos, es_madre, es_padre, regimen_trabajo, horas_mensuales_reglamentarias
+            FROM personal
+            WHERE servicio_id = ?
+            ORDER BY nombre
+        """, (servicio_id,)).fetchall()
+        return [dict(row) for row in rows]
 
 class GenerarRequest(BaseModel):
     servicio_id: int

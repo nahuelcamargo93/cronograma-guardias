@@ -1,6 +1,6 @@
 import pandas as pd
 from datetime import date, timedelta
-import db as database
+from database import queries as database
 from reportes.base import BaseReport
 
 def exportar_excel_data_prep(df_resultados, config_turnos):
@@ -58,6 +58,8 @@ def exportar_excel_data_prep(df_resultados, config_turnos):
     filas_excel.append({"Turno": "  "}) 
     fila_lpp = {"Turno": "LPP"}
     fila_lar = {"Turno": "LAR"}
+    fila_lm = {"Turno": "LM"}
+    fila_cm = {"Turno": "CM"}
 
     for fecha in fechas_unicas:
         fecha_dt = date.fromisoformat(fecha)
@@ -65,9 +67,15 @@ def exportar_excel_data_prep(df_resultados, config_turnos):
         fila_lpp[fecha] = "\n".join(nombres_lpp)
         nombres_lar = [n for n, r in database.LAR.items() if any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in r)]
         fila_lar[fecha] = "\n".join(nombres_lar)
+        nombres_lm = [n for n, r in getattr(database, 'LM', {}).items() if any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in r)]
+        fila_lm[fecha] = "\n".join(nombres_lm)
+        nombres_cm = [n for n, r in getattr(database, 'CM', {}).items() if any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in r)]
+        fila_cm[fecha] = "\n".join(nombres_cm)
 
     filas_excel.append(fila_lpp)
     filas_excel.append(fila_lar)
+    filas_excel.append(fila_lm)
+    filas_excel.append(fila_cm)
 
     df_pivot = pd.DataFrame(filas_excel).set_index("Turno")
     return df_pivot, fechas_unicas
@@ -89,17 +97,21 @@ def exportar_excel_vista_personal(df_resultados, df_personal):
                 fecha_dt = date.fromisoformat(fecha)
                 es_lar = any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in database.LAR.get(nombre, []))
                 es_lpp = any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in database.LPP.get(nombre, []))
+                es_lm = any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in getattr(database, 'LM', {}).get(nombre, []))
+                es_cm = any(date.fromisoformat(i) <= fecha_dt <= date.fromisoformat(f) for i, f in getattr(database, 'CM', {}).get(nombre, []))
                 if es_lar: fila[fecha] = "LAR"
                 elif es_lpp: fila[fecha] = "LPP"
+                elif es_lm: fila[fecha] = "LM"
+                elif es_cm: fila[fecha] = "CM"
                 else: fila[fecha] = "F"
         filas.append(fila)
     return pd.DataFrame(filas).set_index(col_nombre)
 
-from data import asignar_horas
+from reportes.base import asignar_horas_base
 
 def generar_reporte_horas_completo(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, num_semanas):
     df_reporte_horas = df_resultados.copy()
-    df_reporte_horas['Horas'] = df_reporte_horas['Turno'].apply(asignar_horas)
+    df_reporte_horas['Horas'] = df_reporte_horas['Turno'].apply(asignar_horas_base)
     horas_por_persona = df_reporte_horas.groupby('Personal')['Horas'].sum().reset_index()
     
     fecha_inicio_dt = pd.to_datetime(fecha_inicio)
@@ -107,7 +119,7 @@ def generar_reporte_horas_completo(df_resultados, df_personal, dias_del_bloque, 
     for _, persona in df_personal.iterrows():
         nombre = persona['Nombre']
         dias_bloqueados = set()
-        for lics in [database.LPP, database.LAR]:
+        for lics in [database.LPP, database.LAR, getattr(database, 'LM', {}), getattr(database, 'CM', {})]:
             for (ini_s, fin_s) in lics.get(nombre, []):
                 ini_dt = pd.to_datetime(ini_s); fin_dt = pd.to_datetime(fin_s)
                 for d in range((fin_dt - ini_dt).days + 1):
@@ -166,23 +178,35 @@ def generar_reporte_horas_completo(df_resultados, df_personal, dias_del_bloque, 
         'Indice_Carga_Finde': 'Carga %', 'FL3_Total_Acum': 'FL3 Acum', 'FL4_Total_Acum': 'FL4 Acum'
     }).sort_values(by='H. Actual', ascending=False).reset_index(drop=True)
 
-def exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, file_name='Cronograma_Servicio_Kinesiologia.xlsx'):
-    report = BaseReport(file_name)
+def exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, file_name='Cronograma_Servicio_Kinesiologia.xlsx', crono_id=None):
+    report = BaseReport(file_name, feriados=feriados_indices, fecha_inicio=fecha_inicio, crono_id=crono_id)
     
     # 1. Cronograma
-    report.generar_cronograma_sheet(df_pivot, fechas_unicas)
+    ws_c = report.generar_cronograma_sheet(df_pivot, fechas_unicas)
+    if crono_id is not None:
+        row_c = len(df_pivot) + 3
+        ws_c.write(row_c, 0, "ID Cronograma:", report.styles.total_label)
+        ws_c.write(row_c, 1, crono_id, report.styles.total_val)
     
     # 2. Vista por Personal
-    report.generar_vista_personal_sheet(df_persona, fechas_unicas, label_personal="KINESIÓLOGO")
+    ws_p, _ = report.generar_vista_personal_sheet(df_persona, fechas_unicas, label_personal="KINESIÓLOGO")
+    if crono_id is not None:
+        row_p = len(df_persona) + 3
+        ws_p.write(row_p, 0, "ID Cronograma:", report.styles.total_label)
+        ws_p.write(row_p, 1, crono_id, report.styles.total_val)
     
     # 3. Reporte de Horas (Standardized)
     from reportes.base import calcular_resumen_estandar, asignar_horas_base
     df_reporte = calcular_resumen_estandar(df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, func_horas=asignar_horas_base)
-    report.generar_reporte_resumen_sheet(df_reporte)
+    ws_r = report.generar_reporte_resumen_sheet(df_reporte)
+    if crono_id is not None:
+        row_r = len(df_reporte) + 3
+        ws_r.write(row_r, 0, "ID Cronograma:", report.styles.total_label)
+        ws_r.write(row_r, 1, crono_id, report.styles.total_val)
 
     report.close()
 
-def generar_y_exportar(df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas):
+def generar_y_exportar(df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, crono_id=None):
     df_pivot, fechas_unicas = exportar_excel_data_prep(df_resultados, config_turnos)
     df_persona = exportar_excel_vista_personal(df_resultados, df_personal)
-    exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia)
+    exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, crono_id=crono_id)
