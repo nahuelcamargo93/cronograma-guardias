@@ -186,6 +186,10 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas=""):
     reglas_servicio_db = db_queries.cargar_reglas_servicio(servicio_id)
     ajustes_reglas = db_queries.cargar_ajustes_reglas_personal(fecha_inicio, fecha_fin)
     
+    # Cargar e inyectar ajustes de reglas de servicio
+    ajustes_servicio = db_queries.cargar_ajustes_reglas_servicio(fecha_inicio, fecha_fin, servicio_id)
+    ajustes_reglas['__servicio__'] = ajustes_servicio
+    
     empleados = obtener_empleados(servicio_id, fecha_inicio, DIAS_DEL_BLOQUE)
     turnos_dict = obtener_turnos(servicio_id)
     

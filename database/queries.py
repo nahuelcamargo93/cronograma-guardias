@@ -647,3 +647,29 @@ def cargar_ajustes_reglas_personal(fecha_inicio, fecha_fin):
         })
     return resultado
 
+
+def cargar_ajustes_reglas_servicio(fecha_inicio, fecha_fin, servicio_id):
+    """
+    Carga los ajustes temporales de reglas de un servicio que se solapan con el rango dado.
+    Permite suspender o sobrescribir reglas para todo un servicio/sector para un periodo especifico.
+    Retorna: {codigo_regla: [{fecha_inicio, fecha_fin, accion, params}, ...]}
+    """
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT codigo_regla, fecha_inicio, fecha_fin, accion, parametros_json
+            FROM servicios_reglas_ajustes
+            WHERE servicio_id = ? AND fecha_inicio <= ? AND fecha_fin >= ? AND activo = 1
+            ORDER BY codigo_regla
+        """, (servicio_id, fecha_fin, fecha_inicio)).fetchall()
+
+    resultado = {}
+    for codigo, fi, ff, accion, params in rows:
+        resultado.setdefault(codigo, []).append({
+            'fecha_inicio': fi,
+            'fecha_fin':    ff,
+            'accion':       accion,
+            'params':       json.loads(params) if params else None
+        })
+    return resultado
+
+

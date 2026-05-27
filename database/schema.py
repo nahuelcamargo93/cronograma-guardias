@@ -261,6 +261,17 @@ def inicializar_db():
                 activo          INTEGER NOT NULL DEFAULT 1
             );
 
+            CREATE TABLE IF NOT EXISTS servicios_reglas_ajustes (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                servicio_id     INTEGER NOT NULL REFERENCES servicios(id),
+                codigo_regla    TEXT NOT NULL,
+                fecha_inicio    TEXT NOT NULL,
+                fecha_fin       TEXT NOT NULL,
+                accion          TEXT NOT NULL DEFAULT 'SUSPENDER' CHECK(accion IN ('SUSPENDER', 'SOBRESCRIBIR')),
+                parametros_json TEXT,
+                activo          INTEGER NOT NULL DEFAULT 1
+            );
+
             CREATE INDEX IF NOT EXISTS idx_guardias_nombre  ON guardias(nombre);
             CREATE INDEX IF NOT EXISTS idx_guardias_fecha   ON guardias(fecha);
             CREATE INDEX IF NOT EXISTS idx_bloques_inicio   ON bloques_finde_largo(fecha_inicio);
@@ -269,6 +280,7 @@ def inicializar_db():
             CREATE INDEX IF NOT EXISTS idx_turnos_config_serv ON turnos_config(servicio_id);
             CREATE INDEX IF NOT EXISTS idx_turnos_ajustes_fecha ON turnos_ajustes(fecha_inicio);
             CREATE INDEX IF NOT EXISTS idx_pra_nombre_regla ON personal_reglas_ajustes(personal_nombre, codigo_regla);
+            CREATE INDEX IF NOT EXISTS idx_sra_servicio_regla ON servicios_reglas_ajustes(servicio_id, codigo_regla);
         """)
         
         # Migraciones seguras para tablas existentes

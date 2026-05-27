@@ -40,15 +40,16 @@ def resolver_parametros_regla(
         Raises KeyError si la regla no existe en ningún nivel de la jerarquía
                (para que el llamador decida si es un error o simplemente no aplica).
     """
-    # ─── 1. AJUSTE TEMPORAL ───────────────────────────────────────────────────
+    # ─── 1. AJUSTE TEMPORAL PERSONAL ──────────────────────────────────────────
     # Tiene prioridad absoluta. Si hay un ajuste activo para esta persona y fecha,
     # se aplica sin importar lo que digan las reglas base.
-    for aj in ajustes_personal.get(nombre, []):
-        if aj['codigo_regla'] == codigo_regla and aj['fecha_inicio'] <= fecha_str <= aj['fecha_fin']:
-            if aj['accion'] == 'SUSPENDER':
-                return None          # regla completamente desactivada para este período
-            if aj['accion'] == 'SOBRESCRIBIR':
-                return aj['params'] or {}   # nuevos parámetros para este período
+    if ajustes_personal and nombre in ajustes_personal:
+        for aj in ajustes_personal[nombre]:
+            if aj['codigo_regla'] == codigo_regla and aj['fecha_inicio'] <= fecha_str <= aj['fecha_fin']:
+                if aj['accion'] == 'SUSPENDER':
+                    return None          # regla completamente desactivada para este período
+                if aj['accion'] == 'SOBRESCRIBIR':
+                    return aj['params'] or {}   # nuevos parámetros para este período
 
     # ─── 2. REGLA PERSONAL ────────────────────────────────────────────────────
     # Configuración individual que no tiene límite de tiempo.
@@ -62,13 +63,25 @@ def resolver_parametros_regla(
             return valor[0] if len(valor) > 0 else {}
         return valor
 
-    # ─── 3. REGLA DE SERVICIO / ORGANIZACIÓN ─────────────────────────────────
+    # ─── 3. AJUSTE TEMPORAL SERVICIO ──────────────────────────────────────────
+    # Si hay un ajuste activo para el servicio en este período, sobrescribe o suspende.
+    if ajustes_personal and '__servicio__' in ajustes_personal:
+        ajustes_servicio = ajustes_personal['__servicio__']
+        if isinstance(ajustes_servicio, dict) and codigo_regla in ajustes_servicio:
+            for aj in ajustes_servicio[codigo_regla]:
+                if aj['fecha_inicio'] <= fecha_str <= aj['fecha_fin']:
+                    if aj['accion'] == 'SUSPENDER':
+                        return None
+                    if aj['accion'] == 'SOBRESCRIBIR':
+                        return aj['params'] or {}
+
+    # ─── 4. REGLA DE SERVICIO / ORGANIZACIÓN ─────────────────────────────────
     # cargar_reglas_servicio() ya fusiona organización y servicio,
     # con el servicio teniendo mayor prioridad.
     if codigo_regla in reglas_servicio:
         return reglas_servicio[codigo_regla]
 
-    # ─── 4. NO EXISTE EN NINGÚN NIVEL ────────────────────────────────────────
+    # ─── 5. NO EXISTE EN NINGÚN NIVEL ────────────────────────────────────────
     # Devolvemos un centinela especial para distinguir "suspendida" (None)
     # de "no configurada" (Ellipsis).
     return ...   # Ellipsis: la regla no está definida en ningún nivel

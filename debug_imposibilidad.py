@@ -268,6 +268,11 @@ def reportar_imposibilidad(servicio_id, fecha_inicio, fecha_fin):
     )
     reglas_servicio_db = db_queries.cargar_reglas_servicio(servicio_id)
     ajustes_reglas = db_queries.cargar_ajustes_reglas_personal(fecha_inicio, fecha_fin)
+    
+    # Cargar e inyectar ajustes de reglas de servicio para el debugger
+    ajustes_servicio = db_queries.cargar_ajustes_reglas_servicio(fecha_inicio, fecha_fin, servicio_id)
+    ajustes_reglas['__servicio__'] = ajustes_servicio
+    
     empleados = obtener_empleados(servicio_id, fecha_inicio, total_dias)
     turnos_dict = obtener_turnos(servicio_id)
     historial_semana_previa = db_queries.cargar_guardias_previas(fecha_inicio, dias_atras=28, servicio_id=servicio_id)
