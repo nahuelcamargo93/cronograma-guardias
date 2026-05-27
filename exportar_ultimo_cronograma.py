@@ -8,7 +8,7 @@ from data import FERIADOS
 # VARIABLE CONFIGURABLE DE ID DE CRONOGRAMA
 # Dejar en None para exportar el último cronograma de forma automática o elegir por consola.
 # Cambiar por un número entero (ej: 191) para forzar la exportación de un cronograma específico.
-CRONOGRAMA_ID_FORZADO = 193
+CRONOGRAMA_ID_FORZADO = 218
 
 def main():
     conn = sqlite3.connect('cronograma_inteligente.db')

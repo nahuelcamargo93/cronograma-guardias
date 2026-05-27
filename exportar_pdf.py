@@ -13,7 +13,7 @@ import data
 # VARIABLE CONFIGURABLE DE ID DE CRONOGRAMA
 # Dejar en None para autoseleccionar/preguntar en consola.
 # Cambiar por un número entero (ej: 191) para forzar la exportación de un cronograma específico.
-CRONOGRAMA_ID_FORZADO = 197
+CRONOGRAMA_ID_FORZADO = 218
 
 # Cargar Feriados de data.py
 FERIADOS = getattr(data, 'FERIADOS', [])
@@ -454,11 +454,32 @@ def generar_pdf(crono_id, fecha_inicio, fecha_fin, notas, guardias_por_fecha, se
     from reportes.medicos import exportar_excel_vista_personal
     df_persona = exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados)
     
+    style_cell_guardias = ParagraphStyle(
+        name='CellGuardiasStyle',
+        fontName='Helvetica-Bold',
+        fontSize=7.5,
+        leading=9,
+        textColor=colors.HexColor('#1C3144'),
+        alignment=1,
+        spaceAfter=0
+    )
+
+    style_header_guardias = ParagraphStyle(
+        name='HeaderGuardiasStyle',
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        textColor=colors.white,
+        alignment=1,
+        spaceAfter=0
+    )
+    
     fechas_unicas = sorted(df_resultados['Fecha'].unique().tolist())
     p2_headers = ['PERSONAL'] + [f.split('-')[-1] for f in fechas_unicas]
     
     p2_table_data = []
-    p2_table_data.append([Paragraph(f"<b>{h}</b>", style_header) for h in p2_headers])
+    header_row = [Paragraph(f"<b>{h}</b>", style_header) for h in p2_headers]
+    header_row.append(Paragraph("<b>GUARDIAS</b>", style_header_guardias))
+    p2_table_data.append(header_row)
     
     p2_styles = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1C3144')),
@@ -501,6 +522,15 @@ def generar_pdf(crono_id, fecha_inicio, fecha_fin, notas, guardias_por_fecha, se
             val = df_persona.at[nombre, f]
             row.append(format_cell_p2(val, style_cell_p2))
             
+        # Calcular el total de horas efectivamente realizadas y dividirlo por 24hs
+        horas_efectivas = df_persona.at[nombre, "Horas Ef."]
+        guardias_num = horas_efectivas / 24.0
+        if guardias_num.is_integer():
+            guardias_str = str(int(guardias_num))
+        else:
+            guardias_str = f"{guardias_num:.1f}"
+        row.append(Paragraph(f"<b>{guardias_str}</b>", style_cell_guardias))
+            
         bg_color = colors.HexColor('#FFFFFF') if r_idx % 2 == 0 else colors.HexColor('#F5F7FA')
         p2_styles.append(('BACKGROUND', (0, table_row), (-1, table_row), bg_color))
         
@@ -508,8 +538,9 @@ def generar_pdf(crono_id, fecha_inicio, fecha_fin, notas, guardias_por_fecha, se
         
     num_days = len(fechas_unicas)
     col_w_name = 80
-    col_w_day = 22
-    col_widths_p2 = [col_w_name] + [col_w_day] * num_days
+    col_w_day = 21
+    col_w_guardias = 45
+    col_widths_p2 = [col_w_name] + [col_w_day] * num_days + [col_w_guardias]
     
     row_height_p2 = 14
     row_heights_p2 = [18] + [row_height_p2] * len(nombres_ordenados)

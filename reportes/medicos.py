@@ -178,12 +178,12 @@ def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=Non
         # Prorratear por días reales del bloque (si se conoce), default 30 días
         _dias_bloque = dias_del_bloque if dias_del_bloque and dias_del_bloque > 0 else 30
         h_obj = round(h_reg_mensual * _dias_bloque / 30.0, 1)
-        extras = (h_tot_calc - h_obj) / 24.0
+        guardias = h_efectivas / 24.0
         
         fila["Horas Ef."] = int(h_efectivas)
         fila["Horas Lic."] = int(h_licencia + 0.5)
         fila["Horas Tot."] = int(h_tot_calc + 0.5)
-        fila["Extras"] = round(extras, 1)
+        fila["Guardias"] = round(guardias, 1)
         fila["FS Disponibles"] = fs_disponibles
         fila["FS trabajados"] = fs_totales
         fila["Viernes trabajados"] = viernes_trabajados
@@ -380,7 +380,7 @@ def exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_person
         ws_c.write(row_c, 1, crono_id, report.styles.total_val)
     
     # 2. Vista por Personal
-    ext_cols = ["Horas Ef.", "Horas Lic.", "Horas Tot.", "Extras", "FS Disponibles", "FS trabajados", "Viernes trabajados"]
+    ext_cols = ["Horas Ef.", "Horas Lic.", "Horas Tot.", "Guardias", "FS Disponibles", "FS trabajados", "Viernes trabajados"]
     ws_p, row_end = report.generar_vista_personal_sheet(df_persona, fechas_unicas, extension_columns=ext_cols, label_personal="MÉDICO")
     
     # --- TOTALES POR ROL (Específico de médicos) ---

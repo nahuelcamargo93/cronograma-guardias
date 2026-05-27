@@ -31,12 +31,54 @@ from hard_rules import (
     _aplicar_rotacion_mensual_dura,
     _aplicar_findes_completos_y_medios,
     _aplicar_balance_dia_noche,
-    _aplicar_personal_asociado
+    _aplicar_personal_asociado,
+    _aplicar_max_dias_continuos,
+    _aplicar_exacto_finde_y_dia
 )
 
-def construir_modelo_test(empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, servicio_id, reglas_a_ignorar=None, dias_a_ignorar=None):
+def construir_modelo_test(empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, servicio_id, reglas_a_ignorar=None, dias_a_ignorar=None, reglas_a_ignorar_por_persona=None):
     if reglas_a_ignorar is None: reglas_a_ignorar = []
     if dias_a_ignorar is None: dias_a_ignorar = []
+    if reglas_a_ignorar_por_persona is None: reglas_a_ignorar_por_persona = {}
+
+    import copy
+    ajustes_reglas_personal_copia = copy.deepcopy(ajustes_reglas_personal) if ajustes_reglas_personal else {}
+
+    # Copiamos los empleados para no mutar los originales en memoria
+    empleados_copia = []
+    for emp in empleados:
+        emp_copy = copy.copy(emp)
+        emp_copy.dias_licencia = set(emp.dias_licencia)
+        emp_copy.reglas = dict(emp.reglas)
+        emp_copy.puestos_habilitados = set(emp.puestos_habilitados)
+        emp_copy.puestos_primarios = set(emp.puestos_primarios)
+        empleados_copia.append(emp_copy)
+    empleados = empleados_copia
+
+    # Aplicamos suspensiones por persona vía ajustes_reglas_personal_copia
+    for nombre, reglas in reglas_a_ignorar_por_persona.items():
+        if nombre not in ajustes_reglas_personal_copia:
+            ajustes_reglas_personal_copia[nombre] = []
+        for r in reglas:
+            codes = [r]
+            if r == 'LIMITE_HORAS_SEMANALES':
+                codes = ['MAX_HORAS_SEMANA']
+            elif r == 'MIN_FINDES_MES' or r == 'EXACTO_FINDES_MES':
+                codes = ['MIN_FINDES_MES', 'EXACTO_FINDES_MES']
+            
+            for code in codes:
+                ajustes_reglas_personal_copia[nombre].append({
+                    'codigo_regla': code,
+                    'fecha_inicio': '1970-01-01',
+                    'fecha_fin': '9999-12-31',
+                    'accion': 'SUSPENDER',
+                    'params': None
+                })
+            
+            if r == 'LICENCIAS':
+                for emp in empleados:
+                    if emp.nombre == nombre:
+                        emp.dias_licencia = set()
 
     modelo = cp_model.CpModel()
     turnos = {}
@@ -69,26 +111,27 @@ def construir_modelo_test(empleados, demanda_turnos, turnos_dict, demanda_req, a
                 turnos[(nombre, dia, t)] = modelo.NewBoolVar(f'turno_{nombre}_dia{dia}_{t}')
     
             if 'ASIGNACION_FIJA' not in reglas_a_ignorar and dia not in dias_a_ignorar:
-                if dia not in licencia_dias:
-                    fecha_dia_str = (fecha_inicio_dt_d + timedelta(days=dia)).isoformat()
-                    params = _re.resolver_parametros_regla(
-                        'ASIGNACION_FIJA', nombre, fecha_dia_str,
-                        reglas_servicio, emp.reglas, ajustes_reglas_personal or {}
-                    )
-                    if _re.regla_existe(params) and isinstance(params, list):
-                        for asig in params:
-                            fecha_asig = asig.get('Fecha')
-                            dia_asig   = asig.get('Dia')
-                            match = (fecha_asig and fecha_asig == fecha_dia_str) or \
-                                    (dia_asig and mapa_dias.get(dia_asig) == dia_semana)
-                            if match:
-                                turno_config = asig['Turno'].replace(" ", "_")
-                                vars_coincidentes = [
-                                    turnos[(nombre, dia, t)] for t in lista_turnos
-                                    if (nombre, dia, t) in turnos and (t == turno_config or t.startswith(turno_config + "_"))
-                                ]
-                                if vars_coincidentes:
-                                    modelo.Add(sum(vars_coincidentes) == 1)
+                if not reglas_a_ignorar_por_persona or 'ASIGNACION_FIJA' not in reglas_a_ignorar_por_persona.get(nombre, []):
+                    if dia not in licencia_dias:
+                        fecha_dia_str = (fecha_inicio_dt_d + timedelta(days=dia)).isoformat()
+                        params = _re.resolver_parametros_regla(
+                            'ASIGNACION_FIJA', nombre, fecha_dia_str,
+                            reglas_servicio, emp.reglas, ajustes_reglas_personal_copia or {}
+                        )
+                        if _re.regla_existe(params) and isinstance(params, list):
+                            for asig in params:
+                                fecha_asig = asig.get('Fecha')
+                                dia_asig   = asig.get('Dia')
+                                match = (fecha_asig and fecha_asig == fecha_dia_str) or \
+                                        (dia_asig and mapa_dias.get(dia_asig) == dia_semana)
+                                if match:
+                                    turno_config = asig['Turno'].replace(" ", "_")
+                                    vars_coincidentes = [
+                                        turnos[(nombre, dia, t)] for t in lista_turnos
+                                        if (nombre, dia, t) in turnos and (t == turno_config or t.startswith(turno_config + "_"))
+                                    ]
+                                    if vars_coincidentes:
+                                        modelo.Add(sum(vars_coincidentes) == 1)
             
             vars_dia = [turnos[(nombre, dia, t)] for t in lista_turnos if (nombre, dia, t) in turnos]
             if vars_dia:
@@ -104,6 +147,10 @@ def construir_modelo_test(empleados, demanda_turnos, turnos_dict, demanda_req, a
         modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, historial_semana_previa, offset_dia
     )
 
+    # Helper para filtrar empleados en reglas específicas
+    def obtener_empleados_para_regla(nombre_regla):
+        return [e for e in empleados if nombre_regla not in reglas_a_ignorar_por_persona.get(e.nombre, [])]
+
     # Modificamos la demanda_req localmente si hay dias a ignorar
     demanda_req_local = demanda_req.copy()
     if dias_a_ignorar:
@@ -114,13 +161,13 @@ def construir_modelo_test(empleados, demanda_turnos, turnos_dict, demanda_req, a
     if 'LICENCIAS' not in reglas_a_ignorar:
         _aplicar_licencias(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados)
     if 'FRANCO_FORZADO' not in reglas_a_ignorar:
-        _aplicar_franco_forzado(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_franco_forzado(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal_copia)
     if 'MAX_TURNOS' not in reglas_a_ignorar:
-        _aplicar_max_turnos(modelo, turnos, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, dias_del_bloque, fecha_inicio_dt)
+        _aplicar_max_turnos(modelo, turnos, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal_copia, historial_semana_previa, dias_del_bloque, fecha_inicio_dt)
     if 'EXCLUIR_TURNOS' not in reglas_a_ignorar:
-        _aplicar_excluir_turnos(modelo, turnos, empleados, dias_del_bloque, offset_dia, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_excluir_turnos(modelo, turnos, empleados, dias_del_bloque, offset_dia, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal_copia)
     if 'MIN_TURNOS' not in reglas_a_ignorar:
-        _aplicar_min_turnos(modelo, turnos, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
+        _aplicar_min_turnos(modelo, turnos, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal_copia, historial_semana_previa)
     if 'COBERTURA_DINAMICA' not in reglas_a_ignorar:
         # Hack para ignorar la cobertura en dias especificos
         demanda_req_filtrada = {}
@@ -138,38 +185,42 @@ def construir_modelo_test(empleados, demanda_turnos, turnos_dict, demanda_req, a
                 continue
             # Llamamos a _aplicar_cobertura_dinamica pero solo para este dia (es un poco complejo porque la original itera todo el bloque)
             # En su lugar, usaremos el dict normal.
-        _aplicar_cobertura_dinamica(modelo, turnos, empleados, demanda_req_filtrada, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial_semana_previa, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_cobertura_dinamica(modelo, turnos, empleados, demanda_req_filtrada, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial_semana_previa, reglas_servicio, ajustes_reglas_personal_copia)
         
     if 'LIMITE_HORAS_SEMANALES' not in reglas_a_ignorar:
-        _aplicar_limite_horas_semanales(modelo, turnos, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, demanda_turnos, turnos_dict, offset_dia, feriados, limite_horas_global)
+        _aplicar_limite_horas_semanales(modelo, turnos, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal_copia, historial_semana_previa, demanda_turnos, turnos_dict, offset_dia, feriados, limite_horas_global)
     if 'DESCANSO_ENTRE_TURNOS' not in reglas_a_ignorar:
-        _aplicar_descanso_entre_turnos(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal, offset_dia, feriados, demanda_turnos, turnos_dict, historial_semana_previa)
+        _aplicar_descanso_entre_turnos(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal_copia, offset_dia, feriados, demanda_turnos, turnos_dict, historial_semana_previa)
     if 'MIN_FINDES_MES' not in reglas_a_ignorar or 'EXACTO_FINDES_MES' not in reglas_a_ignorar:
-        _aplicar_min_findes_mes(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, servicio_id, reglas_a_ignorar)
+        _aplicar_min_findes_mes(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal_copia, dias_del_bloque, servicio_id, reglas_a_ignorar)
+    if 'EXACTO_FINDE_Y_DIA' not in reglas_a_ignorar:
+        _aplicar_exacto_finde_y_dia(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal_copia, dias_del_bloque, turnos_dict, modo_filtro="HARD")
     if 'FINDES_COMPLETOS_Y_MEDIOS' not in reglas_a_ignorar:
-        _aplicar_findes_completos_y_medios(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque)
+        _aplicar_findes_completos_y_medios(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal_copia, dias_del_bloque)
     if 'BALANCE_DIA_NOCHE' not in reglas_a_ignorar:
-        _aplicar_balance_dia_noche(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal, fecha_inicio_dt)
+        _aplicar_balance_dia_noche(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal_copia, fecha_inicio_dt)
     if 'PERSONAL_ASOCIADO' not in reglas_a_ignorar:
-        _aplicar_personal_asociado(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_personal_asociado(modelo, turnos, obtener_empleados_para_regla('PERSONAL_ASOCIADO'), dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal_copia)
+    if 'MAX_DIAS_CONTINUOS' not in reglas_a_ignorar:
+        _aplicar_max_dias_continuos(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal_copia, historial_semana_previa)
 
     if 'UN_SOLO_TURNO_POR_DIA' not in reglas_a_ignorar:
-        _aplicar_un_solo_turno_por_dia(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_un_solo_turno_por_dia(modelo, turnos, obtener_empleados_para_regla('UN_SOLO_TURNO_POR_DIA'), dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal_copia)
     if 'MAX_HORAS_MES_CALENDARIO' not in reglas_a_ignorar:
-        _aplicar_max_horas_mes_calendario(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_max_horas_mes_calendario(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal_copia)
     if 'FIN_LICENCIA' not in reglas_a_ignorar:
-        _aplicar_fin_licencia(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, reglas_servicio, ajustes_reglas_personal, fecha_inicio_dt)
+        _aplicar_fin_licencia(modelo, turnos, obtener_empleados_para_regla('FIN_LICENCIA'), dias_del_bloque, offset_dia, feriados, demanda_turnos, reglas_servicio, ajustes_reglas_personal_copia, fecha_inicio_dt)
     if 'MIN_HORAS_MES_CALENDARIO' not in reglas_a_ignorar:
-        _aplicar_min_horas_mes_calendario(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_min_horas_mes_calendario(modelo, turnos, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal_copia)
     if 'REGLAS_FECHAS_ESPECIALES' not in reglas_a_ignorar:
-        _aplicar_reglas_fechas_especiales(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
+        _aplicar_reglas_fechas_especiales(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal_copia)
     if 'PATRON_CICLICO' not in reglas_a_ignorar:
-        _aplicar_patron_ciclico(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
+        _aplicar_patron_ciclico(modelo, turnos, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal_copia, historial_semana_previa)
     from data import EVITAR_MEZCLA_SEMANAL_DURA, ROTACION_MENSUAL_DURA
     if 'EVITAR_MEZCLA_SEMANAL' not in reglas_a_ignorar and EVITAR_MEZCLA_SEMANAL_DURA:
-        _aplicar_evitar_mezcla_semanal_dura(modelo, vars_turno_sem, empleados, dias_del_bloque, fecha_inicio_dt)
+        _aplicar_evitar_mezcla_semanal_dura(modelo, vars_turno_sem, obtener_empleados_para_regla('EVITAR_MEZCLA_SEMANAL'), dias_del_bloque, fecha_inicio_dt)
     if 'ROTACION_MENSUAL' not in reglas_a_ignorar and ROTACION_MENSUAL_DURA:
-        _aplicar_rotacion_mensual_dura(modelo, vars_turno_sem, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal or {})
+        _aplicar_rotacion_mensual_dura(modelo, vars_turno_sem, obtener_empleados_para_regla('ROTACION_MENSUAL'), dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal_copia or {})
 
     # Aplicamos las reglas blandas para que sea 100% fiel al modelo real
     if 'REGLAS_BLANDAS' not in reglas_a_ignorar:
@@ -235,10 +286,10 @@ def reportar_imposibilidad(servicio_id, fecha_inicio, fecha_fin):
     lista_reglas = [
         'ASIGNACION_FIJA', 'LICENCIAS', 'FRANCO_FORZADO', 'MAX_TURNOS', 'EXCLUIR_TURNOS',
         'MIN_TURNOS', 'COBERTURA_DINAMICA', 'LIMITE_HORAS_SEMANALES', 'DESCANSO_ENTRE_TURNOS',
-        'MIN_FINDES_MES', 'EXACTO_FINDES_MES', 'UN_SOLO_TURNO_POR_DIA', 'MAX_HORAS_MES_CALENDARIO', 'FIN_LICENCIA',
+        'MIN_FINDES_MES', 'EXACTO_FINDES_MES', 'EXACTO_FINDE_Y_DIA', 'UN_SOLO_TURNO_POR_DIA', 'MAX_HORAS_MES_CALENDARIO', 'FIN_LICENCIA',
         'MIN_HORAS_MES_CALENDARIO', 'REGLAS_FECHAS_ESPECIALES', 'PATRON_CICLICO',
         'EVITAR_MEZCLA_SEMANAL', 'ROTACION_MENSUAL', 'FINDES_COMPLETOS_Y_MEDIOS',
-        'BALANCE_DIA_NOCHE', 'PERSONAL_ASOCIADO', 'REGLAS_BLANDAS'
+        'BALANCE_DIA_NOCHE', 'PERSONAL_ASOCIADO', 'MAX_DIAS_CONTINUOS', 'REGLAS_BLANDAS'
     ]
 
     print("[2] Aislando Regla Conflictiva (Desactivando una a la vez):")
@@ -248,6 +299,45 @@ def reportar_imposibilidad(servicio_id, fecha_inicio, fecha_fin):
         if intentar_resolver(modelo_test):
             print(f"  [WARN] Si se desactiva '{regla}', el modelo se vuelve FACTIBLE.")
             reglas_culpables.append(regla)
+            
+            # Si es una regla personal, realizamos el diagnóstico por persona
+            globales = ['COBERTURA_DINAMICA', 'BALANCE_DIA_NOCHE', 'REGLAS_BLANDAS']
+            if regla not in globales:
+                print(f"    -> Iniciando diagnóstico detallado por persona para '{regla}':")
+                culpables_individuales = []
+                
+                # Paso A: Desactivar la regla para un empleado a la vez
+                for emp in empleados:
+                    reglas_a_ignorar_por_persona = {emp.nombre: [regla]}
+                    modelo_test_pers = construir_modelo_test(*args_modelo, reglas_a_ignorar_por_persona=reglas_a_ignorar_por_persona)
+                    if intentar_resolver(modelo_test_pers):
+                        print(f"      [WARN] Si se desactiva '{regla}' solo para '{emp.nombre}', el modelo se vuelve FACTIBLE (Culpable único).")
+                        culpables_individuales.append(emp.nombre)
+                
+                # Paso B: Si nadie es culpable único, probar combinaciones progresivas (sumatoria)
+                if not culpables_individuales:
+                    print(f"      Ningún profesional es culpable único. Probando combinaciones por sumatoria progresiva...")
+                    activos = []
+                    for emp in empleados:
+                        # Probamos activar para 'activos + [emp.nombre]'
+                        # Para hacer esto, ignoramos la regla para todos los empleados que NO estén en 'activos + [emp.nombre]'
+                        ignorar_para = [e.nombre for e in empleados if e.nombre not in activos and e.nombre != emp.nombre]
+                        reglas_a_ignorar_por_persona = {nombre: [regla] for nombre in ignorar_para}
+                        
+                        modelo_test_comb = construir_modelo_test(*args_modelo, reglas_a_ignorar_por_persona=reglas_a_ignorar_por_persona)
+                        if intentar_resolver(modelo_test_comb):
+                            # Si es factible con esta persona activa, la dejamos activa
+                            activos.append(emp.nombre)
+                        else:
+                            # Si se vuelve inviable, significa que emp.nombre entra en conflicto con 'activos'
+                            if len(activos) == 1:
+                                print(f"      [WARN] Conflicto por sumatoria de DOS: La combinación de '{activos[0]}' y '{emp.nombre}' para la regla '{regla}' hace que el modelo sea INVIABLE.")
+                            elif len(activos) > 1:
+                                print(f"      [WARN] Conflicto por sumatoria: Activar '{regla}' para '{emp.nombre}' en conjunto con {activos} hace que el modelo sea INVIABLE.")
+                            else:
+                                # Si activos está vacío y es inviable, significa que activar la regla solo para emp.nombre ya es inviable
+                                print(f"      [WARN] Conflicto individual absoluto: Activar '{regla}' únicamente para '{emp.nombre}' hace que el modelo sea INVIABLE.")
+                            # No agregamos a emp.nombre a los activos para poder seguir testeando el resto en un estado factible
         else:
             print(f"  - Desactivar '{regla}' NO resuelve el problema.")
 

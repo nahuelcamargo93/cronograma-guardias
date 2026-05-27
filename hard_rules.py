@@ -61,6 +61,8 @@ def aplicar_reglas_duras(
     _aplicar_limite_horas_semanales(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, demanda_turnos, turnos_dict, offset_dia, feriados, limite_horas_global)
     _aplicar_descanso_entre_turnos(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal, offset_dia, feriados, demanda_turnos, turnos_dict, historial_semana_previa)
     _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, servicio_id)
+    _aplicar_exacto_dia_especifico_mes_hard(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, turnos_dict)
+    _aplicar_exacto_finde_y_dia(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, turnos_dict, modo_filtro="HARD")
     _aplicar_findes_completos_y_medios(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque)
     _aplicar_un_solo_turno_por_dia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
     _aplicar_patron_ciclico(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
@@ -70,6 +72,7 @@ def aplicar_reglas_duras(
     _aplicar_reglas_fechas_especiales(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
     _aplicar_balance_dia_noche(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal, fecha_inicio_dt)
     _aplicar_personal_asociado(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+    _aplicar_max_dias_continuos(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
 
     # Aplicar mezcla semanal dura
     if EVITAR_MEZCLA_SEMANAL_DURA:
@@ -753,9 +756,18 @@ def _aplicar_min_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_b
                     horas_lic = int((float(min_h) / dias_del_bloque) * len(dias_lic) + 0.5)
 
                 piso = int((min_h / dias_del_bloque) * len(dias_m) + 0.5)
-                
+
+                # Si el empleado no tiene ningún día laborable en este mes (ej. baja médica todo el mes),
+                # vars_h estará vacío. En ese caso, solo aplicamos la restricción si el crédito por
+                # licencia ya cubre el piso (caso trivialmente satisfecho). Si vars_h está vacío y el
+                # crédito no alcanza a cubrir el piso, NO se aplica la restricción: sería matemáticamente
+                # imposible exigir horas trabajadas a alguien que no tiene días disponibles.
                 if vars_h:
+                    # La restricción al solver es: horas_trabajadas + credito_licencia >= piso
+                    # Solo tiene sentido si hay al menos un día laborable posible.
                     modelo.Add(sum(vars_h) + horas_lic >= piso)
+                # Si vars_h está vacío y horas_lic < piso: el empleado está de licencia todo el mes,
+                # no se añade ninguna restricción (no hay horas que pueda trabajar).
 
 def _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, servicio_id=1, reglas_a_ignorar=None):
     fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
@@ -796,9 +808,9 @@ def _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offs
         
         if params.get('dinamico_licencias', False):
             # Regla de cálculo dinámico basada en licencias del mes
-            if k >= 2:
+            if k >= 3:
                 target_f = 2
-            elif k == 1:
+            elif k >= 1:
                 target_f = 1
             else:
                 target_f = 0
@@ -841,6 +853,116 @@ def _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offs
                 modelo.Add(sum(vars_findes) == target_real)
             else:
                 modelo.Add(sum(vars_findes) >= target_real)
+
+
+def _aplicar_exacto_dia_especifico_mes_hard(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, turnos_dict):
+    """Restricción DURA: exactamente N veces un día específico de la semana en el mes.
+    Versión hard de EXACTO_DIA_ESPECIFICO_MES. No puede ser violada por el solver.
+    Registrar en la BD con código 'EXACTO_DIA_ESPECIFICO_MES_HARD'.
+    JSON: {"dia_semana": "Viernes", "exacto_dias": 1, "dinamico_licencias": true}
+    """
+    from collections import defaultdict
+    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    mapa_dias = {"lunes": 0, "martes": 1, "miercoles": 2, "jueves": 3, "viernes": 4, "sabado": 5, "domingo": 6}
+
+    for emp in empleados:
+        params = _re.resolver_parametros_regla(
+            'EXACTO_DIA_ESPECIFICO_MES_HARD', emp.nombre, FECHA_INICIO,
+            reglas_servicio, emp.reglas, ajustes_reglas
+        )
+        if not _re.regla_existe(params) or _re.regla_suspendida(params):
+            continue
+
+        dia_conf = params.get('dia_semana', 4)
+        if isinstance(dia_conf, str):
+            dia_str = dia_conf.lower()
+            dia_str = dia_str.replace('é', 'e').replace('á', 'a').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+            dia_semana_target = mapa_dias.get(dia_str, 4)
+        else:
+            dia_semana_target = int(dia_conf)
+
+        # Si el empleado tiene ASIGNACION_FIJA en algún día de la semana objetivo,
+        # esa asignación ya controla cuántos veces trabaja ese día — no aplicar la restricción hard
+        # para evitar doble restricción conflictiva.
+        tiene_asig_fija_en_dia = False
+        for d_check in range(dias_del_bloque):
+            fecha_d_check = fecha_inicio_dt + timedelta(days=d_check)
+            if fecha_d_check.weekday() != dia_semana_target:
+                continue
+            if d_check in emp.dias_licencia:
+                continue
+            fecha_check_str = fecha_d_check.isoformat()
+            p_asig = _re.resolver_parametros_regla('ASIGNACION_FIJA', emp.nombre, fecha_check_str, reglas_servicio, emp.reglas, ajustes_reglas)
+            if _re.regla_existe(p_asig) and not _re.regla_suspendida(p_asig):
+                tiene_asig_fija_en_dia = True
+                break
+        if tiene_asig_fija_en_dia:
+            continue  # La asignación fija ya determina cuántos viernes trabaja
+
+        dia_conf = params.get('dia_semana', 4)
+        if isinstance(dia_conf, str):
+            dia_str = dia_conf.lower()
+            dia_str = dia_str.replace('é', 'e').replace('á', 'a').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+            dia_semana_target = mapa_dias.get(dia_str, 4)
+        else:
+            dia_semana_target = int(dia_conf)
+
+        exacto_dias = params.get('exacto_dias', 1)
+
+        # Calcular target con dinamico_licencias (igual que soft y que EXACTO_FINDES_MES)
+        if params.get('dinamico_licencias', False):
+            # k = cantidad de semanas con al menos un día de finde disponible (sin licencia)
+            finde_por_semana = defaultdict(list)
+            for d_f in range(dias_del_bloque):
+                if _is_finde(d_f, offset_dia, feriados):
+                    fecha_df = fecha_inicio_dt + timedelta(days=d_f)
+                    lunes_f = (fecha_df - timedelta(days=fecha_df.weekday())).isoformat()
+                    finde_por_semana[lunes_f].append(d_f)
+
+            k = sum(1 for dias_f in finde_por_semana.values() if any(d not in emp.dias_licencia for d in dias_f))
+
+            if dia_semana_target == 4:  # Viernes
+                if k == 5:
+                    target_dias = 2
+                elif k in (4, 2):
+                    target_dias = 1
+                else:
+                    target_dias = 0
+            else:
+                target_dias = exacto_dias
+        else:
+            target_dias = exacto_dias
+
+        if target_dias == 0:
+            continue
+
+        # Construir variables para cada ocurrencia del día en el mes (excluyendo licencias y francos)
+        vars_dia = []
+        for d in range(dias_del_bloque):
+            fecha_d = fecha_inicio_dt + timedelta(days=d)
+            if fecha_d.weekday() != dia_semana_target:
+                continue
+            if d in emp.dias_licencia:
+                continue
+            fecha_d_str = fecha_d.isoformat()
+            p_franco = _re.resolver_parametros_regla('FRANCO_FORZADO', emp.nombre, fecha_d_str, reglas_servicio, emp.reglas, ajustes_reglas)
+            if _re.regla_existe(p_franco) and not _re.regla_suspendida(p_franco):
+                continue
+
+            v_este_dia = modelo.NewBoolVar(f'traba_dia_esp_hard_{emp.nombre}_{dia_semana_target}_{d}')
+            pool_d = []
+            for t in turnos_dict.keys():
+                if (emp.nombre, d, t) in turnos_vars:
+                    pool_d.append(turnos_vars[(emp.nombre, d, t)])
+
+            if pool_d:
+                modelo.AddMaxEquality(v_este_dia, pool_d)
+                vars_dia.append(v_este_dia)
+
+        if vars_dia:
+            target_real = min(target_dias, len(vars_dia))
+            # RESTRICCION DURA: exactamente target_real días de ese día de la semana
+            modelo.Add(sum(vars_dia) == target_real)
 
 
 def _aplicar_findes_completos_y_medios(
@@ -1449,3 +1571,244 @@ def _aplicar_rotacion_mensual_dura(
 
             if req_families > 0 and has_family:
                 modelo.Add(sum(has_family.values()) >= req_families)
+
+
+def _aplicar_max_dias_continuos(
+    modelo,
+    turnos_vars,
+    empleados: List[Empleado],
+    dias_del_bloque: int,
+    fecha_inicio_dt: date,
+    offset_dia: int,
+    feriados: List[int],
+    demanda_turnos: Dict,
+    turnos_dict: Dict[str, Turno],
+    reglas_servicio: Dict[str, Any],
+    ajustes_reglas: Dict[str, Any],
+    historial: Dict[str, List[Dict]]
+):
+    """
+    Regla dura: Controla que un empleado no trabaje más de max_dias de forma consecutiva,
+    teniendo en cuenta también el historial del mes/ciclo anterior.
+    """
+    for emp in empleados:
+        ref_date = fecha_inicio_dt.isoformat()
+        params = _re.resolver_parametros_regla(
+            'MAX_DIAS_CONTINUOS', emp.nombre, ref_date,
+            reglas_servicio, emp.reglas, ajustes_reglas
+        )
+        if not _re.regla_suspendida(params):
+            max_dias = params.get('max_dias') if isinstance(params, dict) else None
+            if max_dias is None or max_dias <= 0:
+                continue
+
+            traba_dia = {}
+            for d in range(dias_del_bloque):
+                td = "Finde_Feriado" if _is_finde(d, offset_dia, feriados) else "Semana"
+                turnos_dia = [
+                    turnos_vars[(emp.nombre, d, t)] for t in demanda_turnos.get(td, {}).keys()
+                    if (emp.nombre, d, t) in turnos_vars
+                ]
+                if turnos_dia:
+                    v_dia = modelo.NewBoolVar(f"traba_dia_{emp.nombre}_dia{d}")
+                    modelo.Add(v_dia == sum(turnos_dia))
+                    traba_dia[d] = v_dia
+                else:
+                    traba_dia[d] = 0
+
+            hist_emp = historial.get(emp.nombre, []) if historial else []
+            historical_worked_dates = {h['fecha'] for h in hist_emp}
+
+            T = {}
+            for d in range(-max_dias, dias_del_bloque):
+                if d < 0:
+                    fecha_h = (fecha_inicio_dt + timedelta(days=d)).strftime("%Y-%m-%d")
+                    T[d] = 1 if fecha_h in historical_worked_dates else 0
+                else:
+                    T[d] = traba_dia[d]
+
+            window_size = max_dias + 1
+            for start in range(-max_dias, dias_del_bloque - max_dias):
+                window_vars = [T[d] for d in range(start, start + window_size)]
+                modelo.Add(sum(window_vars) <= max_dias)
+
+
+def _aplicar_exacto_finde_y_dia(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, turnos_dict, modo_filtro="HARD", penalizaciones_ad_hoc=None):
+    from collections import defaultdict
+    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    mapa_dias = {"lunes": 0, "martes": 1, "miercoles": 2, "jueves": 3, "viernes": 4, "sabado": 5, "domingo": 6}
+
+    for emp in empleados:
+        params = _re.resolver_parametros_regla(
+            'EXACTO_FINDE_Y_DIA', emp.nombre, FECHA_INICIO,
+            reglas_servicio, emp.reglas, ajustes_reglas
+        )
+        if not _re.regla_existe(params) or _re.regla_suspendida(params):
+            continue
+
+        # Leer modo y filtrar si no corresponde al modo_filtro actual
+        modo = params.get('modo', 'HARD').upper()
+        if modo != modo_filtro:
+            continue
+
+        peso_soft = params.get('peso_soft', 100000)
+
+        # --- 1. CONFIGURACIÓN DÍA DE LA SEMANA ---
+        dia_conf = params.get('dia_semana', 4)
+        if isinstance(dia_conf, str):
+            dia_str = dia_conf.lower().replace('é', 'e').replace('á', 'a').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+            dia_semana_target = mapa_dias.get(dia_str, 4)
+          
+        else:
+            dia_semana_target = int(dia_conf)
+
+        # --- 2. CÁLCULO DE DISPONIBILIDAD DE FINES DE SEMANA ---
+        findes = {}
+        for d in range(dias_del_bloque):
+            fecha_d = fecha_inicio_dt + timedelta(days=d)
+            if _is_finde(d, offset_dia, feriados):
+                lunes = (fecha_d - timedelta(days=fecha_d.weekday())).isoformat()
+                findes.setdefault(lunes, []).append(d)
+
+        # k = cantidad de fines de semana donde el empleado no tiene licencia en TODOS los días
+        k = sum(1 for lunes, dias in findes.items() if any(d not in emp.dias_licencia for d in dias))
+
+        # --- 3. CÁLCULO DE DISPONIBILIDAD DEL DÍA ESPECÍFICO ---
+        k_dia = 0
+        for d in range(dias_del_bloque):
+            fecha_d = fecha_inicio_dt + timedelta(days=d)
+            if fecha_d.weekday() == dia_semana_target:
+                if d in emp.dias_licencia:
+                    continue
+                fecha_d_str = fecha_d.isoformat()
+                p_franco = _re.resolver_parametros_regla('FRANCO_FORZADO', emp.nombre, fecha_d_str, reglas_servicio, emp.reglas, ajustes_reglas)
+                if _re.regla_existe(p_franco) and not _re.regla_suspendida(p_franco):
+                    continue
+                k_dia += 1
+
+        # --- 4. OBTENER TARGETS ---
+        # Target Fines de Semana
+        mapping_findes = params.get('findes_por_disponibilidad')
+        if mapping_findes and isinstance(mapping_findes, dict):
+            target_findes = mapping_findes.get(str(k), mapping_findes.get(k, 0))
+        else:
+            # Fallback default
+            if k >= 3:
+                target_findes = 2
+            elif k >= 1:
+                target_findes = 1
+            else:
+                target_findes = 0
+
+        # Target Días
+        mapping_dias = params.get('dias_por_disponibilidad')
+        if mapping_dias and isinstance(mapping_dias, dict):
+            target_dias = mapping_dias.get(str(k_dia), mapping_dias.get(k_dia, 0))
+        else:
+            # Fallback default (para Viernes/otro día de la semana)
+            if k_dia == 5:
+                target_dias = 2
+            elif k_dia in (4, 2):
+                target_dias = 1
+            else:
+                target_dias = 0
+
+        # --- 5. APLICAR LÓGICA DE FINES DE SEMANA ---
+        vars_findes = []
+        for lunes, dias in findes.items():
+            # Un finde es trabajable si no tiene licencia ni FRANCO_FORZADO en todos sus días
+            dias_habilitados = []
+            for d in dias:
+                if d in emp.dias_licencia:
+                    continue
+                fecha_d_str = (fecha_inicio_dt + timedelta(days=d)).isoformat()
+                p_franco = _re.resolver_parametros_regla('FRANCO_FORZADO', emp.nombre, fecha_d_str, reglas_servicio, emp.reglas, ajustes_reglas)
+                if _re.regla_existe(p_franco) and not _re.regla_suspendida(p_franco):
+                    continue
+                dias_habilitados.append(d)
+            
+            if not dias_habilitados:
+                continue
+            
+            v_este_finde = modelo.NewBoolVar(f'traba_f_exacto_finde_dia_{emp.nombre}_{lunes}')
+            pool_f = []
+            for d in dias_habilitados:
+                for td in ["Finde_Feriado"]:
+                    for t in demanda_turnos.get(td, {}).keys():
+                        if (emp.nombre, d, t) in turnos_vars:
+                            pool_f.append(turnos_vars[(emp.nombre, d, t)])
+            
+            if pool_f:
+                modelo.AddMaxEquality(v_este_finde, pool_f)
+                vars_findes.append(v_este_finde)
+
+        target_f_real = min(target_findes, len(vars_findes)) if vars_findes else 0
+
+        if vars_findes:
+            if modo == "HARD":
+                modelo.Add(sum(vars_findes) == target_f_real)
+            else: # SOFT
+                if penalizaciones_ad_hoc is not None:
+                    violation_under = modelo.NewIntVar(0, target_f_real, f'viol_under_findes_combo_{emp.nombre}')
+                    violation_over = modelo.NewIntVar(0, len(vars_findes), f'viol_over_findes_combo_{emp.nombre}')
+                    modelo.Add(sum(vars_findes) + violation_under - violation_over == target_f_real)
+                    
+                    violation = modelo.NewIntVar(0, len(vars_findes) + target_f_real, f'viol_findes_combo_{emp.nombre}')
+                    modelo.Add(violation == violation_under + violation_over)
+                    penalizaciones_ad_hoc.append(violation * peso_soft)
+
+        # --- 6. APLICAR LÓGICA DE DÍA ESPECÍFICO ---
+        # Si el empleado tiene ASIGNACION_FIJA en algún día de la semana objetivo,
+        # esa asignación ya controla cuántas veces trabaja ese día — no aplicar la restricción
+        # para evitar doble restricción conflictiva.
+        tiene_asig_fija_en_dia = False
+        for d_check in range(dias_del_bloque):
+            fecha_d_check = fecha_inicio_dt + timedelta(days=d_check)
+            if fecha_d_check.weekday() != dia_semana_target:
+                continue
+            if d_check in emp.dias_licencia:
+                continue
+            fecha_check_str = fecha_d_check.isoformat()
+            p_asig = _re.resolver_parametros_regla('ASIGNACION_FIJA', emp.nombre, fecha_check_str, reglas_servicio, emp.reglas, ajustes_reglas)
+            if _re.regla_existe(p_asig) and not _re.regla_suspendida(p_asig):
+                tiene_asig_fija_en_dia = True
+                break
+
+        if not tiene_asig_fija_en_dia:
+            vars_dia = []
+            for d in range(dias_del_bloque):
+                fecha_d = fecha_inicio_dt + timedelta(days=d)
+                if fecha_d.weekday() != dia_semana_target:
+                    continue
+                if d in emp.dias_licencia:
+                    continue
+                fecha_d_str = fecha_d.isoformat()
+                p_franco = _re.resolver_parametros_regla('FRANCO_FORZADO', emp.nombre, fecha_d_str, reglas_servicio, emp.reglas, ajustes_reglas)
+                if _re.regla_existe(p_franco) and not _re.regla_suspendida(p_franco):
+                    continue
+
+                v_este_dia = modelo.NewBoolVar(f'traba_dia_exacto_finde_dia_{emp.nombre}_{dia_semana_target}_{d}')
+                pool_d = []
+                for t in turnos_dict.keys():
+                    if (emp.nombre, d, t) in turnos_vars:
+                        pool_d.append(turnos_vars[(emp.nombre, d, t)])
+
+                if pool_d:
+                    modelo.AddMaxEquality(v_este_dia, pool_d)
+                    vars_dia.append(v_este_dia)
+
+            target_d_real = min(target_dias, len(vars_dia)) if vars_dia else 0
+
+            if vars_dia:
+                if modo == "HARD":
+                    modelo.Add(sum(vars_dia) == target_d_real)
+                else: # SOFT
+                    if penalizaciones_ad_hoc is not None:
+                        violation_under = modelo.NewIntVar(0, target_d_real, f'viol_under_dia_combo_{emp.nombre}_{dia_semana_target}')
+                        violation_over = modelo.NewIntVar(0, len(vars_dia), f'viol_over_dia_combo_{emp.nombre}_{dia_semana_target}')
+                        modelo.Add(sum(vars_dia) + violation_under - violation_over == target_d_real)
+                        
+                        violation = modelo.NewIntVar(0, len(vars_dia) + target_d_real, f'viol_dia_combo_{emp.nombre}_{dia_semana_target}')
+                        modelo.Add(violation == violation_under + violation_over)
+                        penalizaciones_ad_hoc.append(violation * peso_soft)
+

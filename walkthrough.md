@@ -1,59 +1,72 @@
-# Walkthrough: Refuerzo Dinámico de Residentes y Corrección de Métricas de Fines de Semana (FS)
+# Walkthrough - Cambios en Cronograma (PDF, Word, Historial y Regla de Viernes)
 
-Hemos implementado con total éxito tanto la nueva regla de **refuerzo dinámico por residentes** como la **corrección del conteo de fines de semana (FS)** en los reportes de Excel.
-
----
-
-## Cambios Realizados
-
-### 1. Refactorización de Cobertura Colectiva (Refuerzo por Residente)
-En [hard_rules.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/hard_rules.py#L212), reemplazamos la lógica lineal individual de `_aplicar_cobertura_dinamica` por una estructura que:
-* **Agrupa por ventana horaria:** Las demandas de un mismo día que comparten el mismo rango `(hora_inicio, hora_fin)` (ej. día vs. noche) se resuelven en conjunto.
-* **Integración de Extras:** Los médicos senior configurados en `PERSONAL_EXTRA_FUERA_MINIMO` (Mora, Moya, Baracat) ahora **sí cuentan** para cumplir con el cupo mínimo de Planta. Esto elimina la necesidad de asignar guardias de Planta extras redundantes (como la molesta `N_Planta` de 12h asignada anteriormente a Pregot o Silva).
-* **Incremento Dinámico de Residentes:** Si alguno de estos médicos especiales de Planta trabaja en una ventana horaria, el motor añade dinámicamente restricciones matemáticas lineales en OR-Tools para **incrementar en 1 el mínimo de residentes de esa misma ventana** (pasando el requerimiento de residentes de 1 a 2).
-
-### 2. Corrección en Conteo de Fines de Semana (`FS`) en Excel
-Anteriormente, el reporte de Excel sumaba los **feriados que caen en días hábiles** (lunes a viernes) dentro de la columna **`FS` (Fines de Semana)**. Esto causaba discrepancias visuales significativas, reportando erróneamente que médicos como **Murillo** y **Palermo** trabajaban 3 fines de semana cuando en realidad solo trabajaban 2 fines de semana y 1 feriado en día de semana (el lunes 15 de junio).
-
-Para corregir esto, modificamos:
-* **Reporte de Médicos:** En [medicos.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/reportes/medicos.py#L64), refactorizamos la función interna `es_finde` para validar estrictamente que el día sea sábado o domingo (`dt.weekday() >= 5`), removiendo la inclusión de los `FERIADOS` semanales de esta columna.
-* **Reporte de Base (Resumen):** En [base.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/reportes/base.py#L25), removimos la cláusula `or (delta in feriados_indices)` del contador de `findes_actuales`. Esto asegura que los días feriados no se sumen a la columna de fines de semana en la hoja resumen estandarizada.
-* *Nota:* Los feriados siguen estando perfectamente contabilizados e integrados en los cálculos y columnas de **Fines de Semana Largos (`FSL3` y `FSL4`)**, que es su ubicación métrica correcta.
+Se realizaron cuatro cambios principales en el sistema de cronogramas para cumplir con todos los requerimientos y solucionar los problemas reportados:
 
 ---
 
-## Resultados y Validación de Métricas (Cronograma ID 68)
+## 1. Agregar columna 'guardias' al PDF
 
-Ejecutamos el motor de optimización y el generador de reportes de Excel de manera exitosa. Los resultados para el cronograma generado de junio de 2026 son matemáticamente impecables:
+Se modificó el script de generación de PDF ([exportar_pdf.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/exportar_pdf.py)) para agregar una columna al final de la tabla de la segunda hoja (vista por personal) que muestra el total de guardias de 24 horas equivalentes que realiza.
 
-### 1. Conteo Correcto de Fines de Semana (FS)
-Al auditar los turnos del último cronograma generado (ID 68), las métricas de Excel coinciden exactamente con la realidad:
-
-* **`Murillo, Santiago`:**
-  * **Turnos Trabajados:** 
-    * Martes 09/06
-    * Viernes 12/06
-    * Lunes 15/06 (Feriado en día de semana)
-    * Sábado 27/06 (Fin de semana)
-  * **Métrica FS anterior:** **3** (incluía erróneamente el lunes 15/06 feriado)
-  * **Métrica FS corregida:** **1** (cuenta estrictamente el sábado 27/06) - **¡Totalmente correcto!**
-
-* **`Palermo Agustín`:**
-  * **Turnos Trabajados:**
-    * Miércoles 03/06
-    * Domingo 07/06 (Fin de semana)
-    * Miércoles 10/06
-    * Sábado 13/06 (Fin de semana)
-    * Martes 16/06
-    * Viernes 19/06
-    * Miércoles 24/06
-    * Lunes 29/06
-  * **Métrica FS anterior:** **3** (por el feriado de junio)
-  * **Métrica FS corregida:** **2** (cuenta estrictamente el domingo 07/06 y sábado 13/06) - **¡Totalmente correcto!**
+### Detalles:
+- Se agregaron estilos de celda y encabezado adecuados.
+- Se lee el total de horas efectivas (`"Horas Ef."` de `df_persona`) y se calcula la equivalencia en guardias dividiendo por `24.0`.
+- El número se visualiza de forma limpia: como entero si no tiene parte decimal (ej. `2`) o con un decimal en caso contrario (ej. `1.5`).
+- Se reajustaron los anchos de columnas para asegurar que la tabla encaje perfectamente en la hoja A4 apaisada.
 
 ---
 
-## Conclusiones
-Ambas correcciones aportan una mejora sustancial al sistema:
-1. **Precisión Total:** Los reportes de Excel y resúmenes de horas entregados al área de administración médica ahora reflejan con absoluta fidelidad los fines de semana reales trabajados.
-2. **Claridad de Carga:** Se evita cualquier malentendido o queja del personal médico sobre la cantidad de fines de semana cubiertos en el mes.
+## 2. Nueva exportación a Word (.docx) de la primera hoja
+
+Se creó el script [exportar_docx.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/exportar_docx.py) que recrea de forma editable el calendario mensual de guardias (primera hoja) en formato Word.
+
+### Detalles:
+- Configura de forma automática el documento en A4 horizontal con márgenes estrechos.
+- Diseña una tabla idéntica visualmente al PDF, con sombreado de fines de semana y feriados, e incluye los turnos (Guardia, Día y Noche).
+- Sincroniza la lectura del cronograma a exportar utilizando la variable `CRONOGRAMA_ID_FORZADO`.
+
+---
+
+## 3. Corrección de guardias consecutivas en la transición de mes
+
+Se corrigió la función `cargar_guardias_previas` (en [database/queries.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/database/queries.py) y [db.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/db.py)) que estaba omitiendo el filtro de `servicio_id` al buscar el historial de guardias del mes anterior.
+
+### Detalles:
+- **Error:** Al no filtrar por `servicio_id`, la consulta cargaba un cronograma de otro servicio (Enfermería) en lugar del de Médicos si ambos iniciaban el mismo día. Esto resultaba en un historial vacío para los médicos, permitiendo que Matricadi trabajara el último día de mayo y el primer día de junio de forma consecutiva.
+- **Solución:** Se corrigió la consulta para asegurar el filtro de `servicio_id`. Ahora el solver sabe que Matricadi estuvo de guardia el 31 de mayo, por lo que aplica las 48hs obligatorias de descanso y recién le asigna su primera guardia el 3 de junio.
+
+---
+
+## 4. Solución a la regla de viernes limitados (EXACTO_DIA_ESPECIFICO_MES)
+
+Se detectó y solucionó un bug lógico en el cálculo dinámico de licencias para la regla de viernes dentro de [soft_rules.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/soft_rules.py).
+
+### Detalles:
+- **Error:** En la función `_aplicar_min_dia_especifico_mes_soft`, cuando la opción `dinamico_licencias` estaba activa para los viernes, el código contenía una inversión lógica:
+  - `k == 3` (3 semanas disponibles) se evaluaba a `target_dias = 0` viernes.
+  - `k == 2` (2 semanas disponibles) se evaluaba a `target_dias = 1` viernes.
+  Esto forzaba incorrectamente a que todos los médicos disponibles por 3 semanas (como Aguilera Graciela, Garcia Rodriguez, Motta Mayra, etc.) tuvieran un objetivo de 0 viernes. Al retirarles los viernes, se reducía drásticamente la capacidad de personal disponible para cubrir los viernes requeridos del mes, forzando a que otros médicos (como Pregot, Zeballos, o Matricadi en corridas anteriores) tuvieran que cubrir múltiples viernes.
+- **Solución:** Se simplificó y corrigió el cálculo. Si un empleado está disponible 3 o más semanas en el mes (`k >= 3`), su objetivo es trabajar **exactamente 1 viernes**. Si está disponible 2 semanas o menos (por licencias prolongadas), su objetivo es **0 viernes**.
+
+### Análisis Matemático de Cronograma ID 216:
+* **Capacidad vs Demanda:**
+  - June 2026 tiene 4 viernes. La demanda mínima requiere **12 guardias de Planta** en total de viernes. Sin embargo, para cumplir con el mínimo de horas mensuales del personal (`MIN_HORAS_MES_CALENDARIO = 185` horas, que obliga a los médicos de planta a realizar al menos 8 guardias de 24h), el solver debió distribuir horas adicionales, asignando un total de **19 turnos de Planta en días viernes**.
+  - De los 20 médicos de planta activos, 3 tienen objetivos de 0 viernes (por licencias prolongadas o límites de 24h/48h mensuales como Quintero, Diaz Villafañe, y Quiroga Sassu). Esto nos deja con **17 médicos de planta disponibles** para cubrir los viernes.
+  - **Principio del Palomar:** Distribuir 19 turnos necesarios de viernes entre 17 médicos disponibles hace **matemáticamente obligatorio** que al menos 2 médicos cubran 2 viernes.
+* **Resultado:** El solver distribuyó perfectamente la carga:
+  - **Matricadi Wendy Ailen:** Ahora trabaja **exactamente 1 viernes** (el 26/06).
+  - **Pregot Analia Mariana** y **Zeballos Valeria Alejandra:** Son las únicas que cubren 2 viernes (el 05/06 y 19/06).
+  - Todos los demás médicos con la regla activa trabajan **exactamente 1 viernes** (o 0 si estaban licenciados). El sistema funciona ahora con la máxima equidad teóricamente posible.
+
+---
+
+## Verificación
+
+1. Se ejecutó la optimización de CLI:
+   ```bash
+   venv\Scripts\python.exe main.py
+   ```
+   Generó correctamente el **Cronograma ID 216**.
+2. Se exportaron los documentos actualizados:
+   - PDF: [Cronograma_Medicos_Junio_2026.pdf](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/Cronograma_Medicos_Junio_2026.pdf)
+   - Word: [Cronograma_Medicos_Junio_2026.docx](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/Cronograma_Medicos_Junio_2026.docx)

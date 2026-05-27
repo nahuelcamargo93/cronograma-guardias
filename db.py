@@ -627,6 +627,7 @@ def inicializar_catalogo_reglas():
         ('EXACTO_FINDES_MES', 'HARD', 'Asegura que el personal tenga exactamente N fines de semana trabajados en el mes.'),
         ('MIN_DIA_ESPECIFICO_MES', 'HARD', 'Asegura que el personal trabaje al menos N veces un dia de la semana especifico en el mes. JSON: {"dia_semana": "Viernes", "min_dias": 1}'),
         ('EXACTO_DIA_ESPECIFICO_MES', 'HARD', 'Asegura que el personal trabaje exactamente N veces un dia de la semana especifico en el mes. JSON: {"dia_semana": "Viernes", "exacto_dias": 1}'),
+        ('EXACTO_FINDE_Y_DIA', 'HARD', 'Regla unificada para fines de semana y días específicos (ej. viernes) basada en la cantidad de fines de semana y días hábiles. JSON: {"dia_semana": "Viernes", "findes_por_disponibilidad": {"5": 2, "4": 2, "3": 2, "2": 1, "1": 1, "0": 0}, "dias_por_disponibilidad": {"5": 2, "4": 1, "3": 0, "2": 1, "1": 0, "0": 0}, "modo": "HARD", "peso_soft": 100000}'),
         ('FINDES_COMPLETOS_Y_MEDIOS', 'HARD', 'Asegura la cantidad exacta de fines de semana completos y medios trabajados según la disponibilidad. JSON: {"por_disponibilidad": {"4": {"completos": 2, "medios": 1}}}'),
         ('PESO_EQUIDAD_FERIADOS', 'SOFT', 'Peso de penalización por desigualdad en feriados trabajados anuales'),
         ('PENALIZACION_PUESTO_NO_PREFERIDO', 'SOFT', 'Penaliza cuando una persona es asignada a un turno de un puesto que NO es su puesto primario (según personal_puestos.es_primario). Útil para desincentivar que residentes cubran puestos de planta. JSON: {"peso": 500}'),
@@ -791,13 +792,24 @@ def cargar_guardias_previas(fecha_inicio_str, dias_atras=28, servicio_id=None):
     """
     with get_connection() as conn:
         # 1. Buscar el ID del ultimo cronograma aprobado
-        ultimo_cr_query = """
-            SELECT id FROM cronogramas
-            WHERE estado = 'aprobado' AND fecha_inicio < ?
-            ORDER BY fecha_inicio DESC
-            LIMIT 1
-        """
-        row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str]).fetchone()
+        if servicio_id is not None:
+            ultimo_cr_query = """
+                SELECT DISTINCT c.id FROM cronogramas c
+                JOIN guardias g ON c.id = g.cronograma_id
+                JOIN personal p ON g.nombre = p.nombre
+                WHERE c.estado = 'aprobado' AND c.fecha_inicio < ? AND p.servicio_id = ?
+                ORDER BY c.fecha_inicio DESC
+                LIMIT 1
+            """
+            row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str, servicio_id]).fetchone()
+        else:
+            ultimo_cr_query = """
+                SELECT id FROM cronogramas
+                WHERE estado = 'aprobado' AND fecha_inicio < ?
+                ORDER BY fecha_inicio DESC
+                LIMIT 1
+            """
+            row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str]).fetchone()
         
         if not row_cr:
             return {} # No hay cronogramas previos aprobados

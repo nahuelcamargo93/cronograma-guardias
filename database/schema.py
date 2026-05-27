@@ -560,6 +560,7 @@ def inicializar_catalogo_reglas():
         ('EXACTO_FINDES_MES', 'HARD', 'Asegura que el personal tenga exactamente N fines de semana trabajados en el mes.'),
         ('MIN_DIA_ESPECIFICO_MES', 'HARD', 'Asegura que el personal trabaje al menos N veces un dia de la semana especifico en el mes. JSON: {"dia_semana": "Viernes", "min_dias": 1}'),
         ('EXACTO_DIA_ESPECIFICO_MES', 'HARD', 'Asegura que el personal trabaje exactamente N veces un dia de la semana especifico en el mes. JSON: {"dia_semana": "Viernes", "exacto_dias": 1}'),
+        ('EXACTO_FINDE_Y_DIA', 'HARD', 'Regla unificada para fines de semana y días específicos (ej. viernes) basada en la cantidad de fines de semana y días hábiles. JSON: {"dia_semana": "Viernes", "findes_por_disponibilidad": {"5": 2, "4": 2, "3": 2, "2": 1, "1": 1, "0": 0}, "dias_por_disponibilidad": {"5": 2, "4": 1, "3": 0, "2": 1, "1": 0, "0": 0}, "modo": "HARD", "peso_soft": 100000}'),
         ('FINDES_COMPLETOS_Y_MEDIOS', 'HARD', 'Asegura la cantidad exacta de fines de semana completos y medios trabajados según la disponibilidad. JSON: {"por_disponibilidad": {"4": {"completos": 2, "medios": 1}}}'),
         ('PESO_EQUIDAD_FERIADOS', 'SOFT', 'Peso de penalización por desigualdad en feriados trabajados anuales')
     ]

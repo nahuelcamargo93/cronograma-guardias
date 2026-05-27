@@ -216,13 +216,24 @@ def cargar_guardias_previas(fecha_inicio_str, dias_atras=28, servicio_id=None):
     """
     with get_connection() as conn:
         # 1. Buscar el ID del ultimo cronograma aprobado
-        ultimo_cr_query = """
-            SELECT id FROM cronogramas
-            WHERE estado = 'aprobado' AND fecha_inicio < ?
-            ORDER BY fecha_inicio DESC
-            LIMIT 1
-        """
-        row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str]).fetchone()
+        if servicio_id is not None:
+            ultimo_cr_query = """
+                SELECT DISTINCT c.id FROM cronogramas c
+                JOIN guardias g ON c.id = g.cronograma_id
+                JOIN personal p ON g.nombre = p.nombre
+                WHERE c.estado = 'aprobado' AND c.fecha_inicio < ? AND p.servicio_id = ?
+                ORDER BY c.fecha_inicio DESC
+                LIMIT 1
+            """
+            row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str, servicio_id]).fetchone()
+        else:
+            ultimo_cr_query = """
+                SELECT id FROM cronogramas
+                WHERE estado = 'aprobado' AND fecha_inicio < ?
+                ORDER BY fecha_inicio DESC
+                LIMIT 1
+            """
+            row_cr = conn.execute(ultimo_cr_query, [fecha_inicio_str]).fetchone()
         
         if not row_cr:
             return {} # No hay cronogramas previos aprobados

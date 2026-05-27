@@ -209,29 +209,55 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
         
         indices_cat = []
         for idx, p in df_personal.iterrows():
+            # Exclusiones explícitas por persona/bloque
+            if p['Nombre'] == "BRIZUELA Irma" and cat_code == 'B':
+                continue
+            if p['Nombre'] == "OJEDA Miriam" and cat_code != 'B':
+                continue
+                
             if p['Categoria'] == cat_code:
                 indices_cat.append(idx)
             else:
-                # Verificar si tiene reglas que habilitan turnos de esta categoría
+                # Verificar si tiene reglas y puestos que habilitan turnos de esta categoría
+                puestos_hab = p.get('puestos_habilitados', [])
+                if isinstance(puestos_hab, set):
+                    puestos_hab = list(puestos_hab)
+                elif not isinstance(puestos_hab, list):
+                    puestos_hab = []
+                
                 reglas = p.get('reglas', {})
+                excluir_turnos = []
                 if isinstance(reglas, dict) and 'EXCLUIR_TURNOS' in reglas:
                     excluir_rules = reglas['EXCLUIR_TURNOS']
                     if isinstance(excluir_rules, list) and len(excluir_rules) > 0:
                         excluir_turnos = excluir_rules[0].get('turnos', [])
-                        cat_shifts = {
-                            'A': ["00-06_Monitorista", "00-06_Supervisor"],
-                            'B': ["06-12_Monitorista", "06-12_Supervisor"],
-                            'C': ["12-18_Monitorista", "12-18_Supervisor"],
-                            'D': ["18-24_Monitorista", "18-24_Supervisor"]
-                        }.get(cat_code, [])
-                        if any(shift not in excluir_turnos for shift in cat_shifts):
-                            indices_cat.append(idx)
+                        
+                cat_shifts = {
+                    'A': ["00-06_Monitorista", "00-06_Supervisor", "00-06_Administrativo"],
+                    'B': ["06-12_Monitorista", "06-12_Supervisor", "06-12_Administrativo"],
+                    'C': ["12-18_Monitorista", "12-18_Supervisor", "12-18_Administrativo"],
+                    'D': ["18-24_Monitorista", "18-24_Supervisor", "18-24_Administrativo"]
+                }.get(cat_code, [])
+                
+                elegible = False
+                for shift in cat_shifts:
+                    puesto_shift = shift.split('_')[1]
+                    if puesto_shift in puestos_hab and shift not in excluir_turnos:
+                        elegible = True
+                        break
+                if elegible:
+                    indices_cat.append(idx)
                             
         personas_cat = df_personal.loc[indices_cat].copy()
         if personas_cat.empty:
             continue
             
-        personas_cat['sort_key'] = personas_cat['Rol'].map(lambda r: rol_orden.get(r, 100))
+        def get_sort_key(row):
+            if row['Nombre'] == "OJEDA Miriam":
+                return 1000
+            return rol_orden.get(row['Rol'], 100)
+            
+        personas_cat['sort_key'] = personas_cat.apply(get_sort_key, axis=1)
         personas_cat = personas_cat.sort_values(by=['sort_key', 'Nombre'])
         
         # 1. Cabecera del bloque (Días y Números)
@@ -266,13 +292,23 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
                 }
                 prefix = cat_prefix_map.get(cat_code, '')
                 # Si el valor es una guardia/turno asignado pero no pertenece a esta categoría,
-                # para este bloque se considera Franco ("F")
-                if ("_Monitorista" in val or "_Supervisor" in val) and not val.startswith(prefix):
-                    val = "F"
+                # para este bloque se considera ocupado en otro turno ("X")
+                # Si es un turno asignado pero no pertenece a esta categoría, se considera ocupado en otro turno ("X")
+                cat_prefixes = ['00-06', '06-12', '12-18', '18-24']
+                is_shift = val not in ["F", "FLR", "LAR", "LPP", "LM", "CM", "", None]
+                if is_shift:
+                    belongs_to_current = val.startswith(prefix) or (
+                        not any(val.startswith(pfx) for pfx in cat_prefixes) and p['Categoria'] == cat_code
+                    )
+                    if not belongs_to_current:
+                        val = "X"
                 
                 # Traducir / simplificar texto de turno para COM
                 if "Supervisor" in val:
                     txt = "SUP"
+                    fmt = sup_fmt_week if is_sep else sup_fmt
+                elif "Administrativo" in val or ("Monitorista" in val and nombre == "OJEDA Miriam"):
+                    txt = "ADM"
                     fmt = sup_fmt_week if is_sep else sup_fmt
                 elif "Monitorista" in val:
                     txt = "MON"
@@ -285,6 +321,9 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
                 elif val == "F":
                     txt = "F"
                     fmt = f_fmt_week if is_sep else f_fmt
+                elif val == "X":
+                    txt = "X"
+                    fmt = styles.cell_week if is_sep else styles.cell
                 elif val in ["LAR", "LPP", "LM", "CM"]:
                     txt = val
                     fmt = styles.grey_cell_week if is_sep else styles.grey_cell
@@ -471,23 +510,44 @@ def generar_reporte_resumen_com_sheet(report, df_reporte, df_personal, sheet_nam
         # Filtrar personas que pertenecen a esta categoría
         indices_cat = []
         for idx, p in df_personal.iterrows():
+            # Exclusiones explícitas por persona/bloque
+            if p['Nombre'] == "BRIZUELA Irma" and cat_code == 'B':
+                continue
+            if p['Nombre'] == "OJEDA Miriam" and cat_code != 'B':
+                continue
+                
             if p['Categoria'] == cat_code:
                 indices_cat.append(idx)
             else:
-                # Verificar si tiene reglas que habilitan turnos de esta categoría
+                # Verificar si tiene reglas y puestos que habilitan turnos de esta categoría
+                puestos_hab = p.get('puestos_habilitados', [])
+                if isinstance(puestos_hab, set):
+                    puestos_hab = list(puestos_hab)
+                elif not isinstance(puestos_hab, list):
+                    puestos_hab = []
+                
                 reglas = p.get('reglas', {})
+                excluir_turnos = []
                 if isinstance(reglas, dict) and 'EXCLUIR_TURNOS' in reglas:
                     excluir_rules = reglas['EXCLUIR_TURNOS']
                     if isinstance(excluir_rules, list) and len(excluir_rules) > 0:
                         excluir_turnos = excluir_rules[0].get('turnos', [])
-                        cat_shifts = {
-                            'A': ["00-06_Monitorista", "00-06_Supervisor"],
-                            'B': ["06-12_Monitorista", "06-12_Supervisor"],
-                            'C': ["12-18_Monitorista", "12-18_Supervisor"],
-                            'D': ["18-24_Monitorista", "18-24_Supervisor"]
-                        }.get(cat_code, [])
-                        if any(shift not in excluir_turnos for shift in cat_shifts):
-                            indices_cat.append(idx)
+                        
+                cat_shifts = {
+                    'A': ["00-06_Monitorista", "00-06_Supervisor", "00-06_Administrativo"],
+                    'B': ["06-12_Monitorista", "06-12_Supervisor", "06-12_Administrativo"],
+                    'C': ["12-18_Monitorista", "12-18_Supervisor", "12-18_Administrativo"],
+                    'D': ["18-24_Monitorista", "18-24_Supervisor", "18-24_Administrativo"]
+                }.get(cat_code, [])
+                
+                elegible = False
+                for shift in cat_shifts:
+                    puesto_shift = shift.split('_')[1]
+                    if puesto_shift in puestos_hab and shift not in excluir_turnos:
+                        elegible = True
+                        break
+                if elegible:
+                    indices_cat.append(idx)
                             
         personas_cat = df_personal.loc[indices_cat].copy()
         if personas_cat.empty:
@@ -498,7 +558,13 @@ def generar_reporte_resumen_com_sheet(report, df_reporte, df_personal, sheet_nam
             "Supervisor Suplente": 2,
             "Monitorista": 3
         }
-        personas_cat['sort_key'] = personas_cat['Rol'].map(lambda r: rol_orden.get(r, 100))
+        
+        def get_sort_key(row):
+            if row['Nombre'] == "OJEDA Miriam":
+                return 1000
+            return rol_orden.get(row['Rol'], 100)
+            
+        personas_cat['sort_key'] = personas_cat.apply(get_sort_key, axis=1)
         personas_cat = personas_cat.sort_values(by=['sort_key', 'Nombre'])
         
         # 1. Cabeceras del bloque
