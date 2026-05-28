@@ -1,15 +1,17 @@
 from datetime import date, timedelta
-from data import FECHA_INICIO
+from data import FECHA_INICIO as GLOBAL_FECHA_INICIO
 import database as _db
 from hard_rules import _aplicar_exacto_finde_y_dia
 
 def _get_licencias(): return _db.LAR, _db.LPP
 
-def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=1, flr_tracker=None, historial_semana_previa=None, demanda_req=None, ajustes_demanda=None, vars_turno_sem=None):
+def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id=1, flr_tracker=None, historial_semana_previa=None, demanda_req=None, ajustes_demanda=None, vars_turno_sem=None, fecha_inicio=None, fecha_fin=None):
+    FECHA_INICIO = fecha_inicio if fecha_inicio else GLOBAL_FECHA_INICIO
     # Cargar el motor de reglas desde la BD
     reglas_servicio = _db.cargar_reglas_servicio(servicio_id)
     reglas_personal = _db.cargar_reglas_personal(servicio_id)
-    from data import FECHA_FIN
+    from data import FECHA_FIN as GLOBAL_FECHA_FIN
+    FECHA_FIN = fecha_fin if fecha_fin else GLOBAL_FECHA_FIN
     ajustes_personal = _db.cargar_ajustes_reglas_personal(FECHA_INICIO, FECHA_FIN)
     import rule_engine
     
@@ -64,7 +66,7 @@ def aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dic
 
     fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
     _aplicar_min_dia_especifico_mes_soft(modelo, turnos, empleados, turnos_dict, reglas_servicio, ajustes_personal, dias_del_bloque, fecha_inicio_dt, penalizaciones_ad_hoc, servicio_id)
-    _aplicar_exacto_finde_y_dia(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_personal, dias_del_bloque, turnos_dict, modo_filtro="SOFT", penalizaciones_ad_hoc=penalizaciones_ad_hoc)
+    _aplicar_exacto_finde_y_dia(modelo, turnos, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_personal, dias_del_bloque, turnos_dict, modo_filtro="SOFT", penalizaciones_ad_hoc=penalizaciones_ad_hoc, fecha_inicio_dt=fecha_inicio_dt)
     
     # Determinar los meses calendario involucrados en el bloque
     meses_calendario = set()

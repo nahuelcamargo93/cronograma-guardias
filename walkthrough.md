@@ -70,3 +70,29 @@ Se detectó y solucionó un bug lógico en el cálculo dinámico de licencias pa
 2. Se exportaron los documentos actualizados:
    - PDF: [Cronograma_Medicos_Junio_2026.pdf](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/Cronograma_Medicos_Junio_2026.pdf)
    - Word: [Cronograma_Medicos_Junio_2026.docx](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/Cronograma_Medicos_Junio_2026.docx)
+
+---
+
+## 5. Solución a la Inviabilidad del Servicio 3 (Julio 2027)
+
+Se diagnosticó y resolvió una imposibilidad matemática directa que impedía generar el cronograma de Julio de 2027 para el Servicio 3.
+
+### Causa Raíz del Conflicto:
+El modelo entraba en una contradicción directa (inviable en la propagación inicial de variables) por la interacción de cuatro reglas críticas:
+1. **`MIN_HORAS_MES_CALENDARIO` (185h)**: El plantel de 26 médicos promedia un máximo de 86h/médico si la demanda es de 3 por turno, o 171.7h si es de 6. Exigir 185h era matemáticamente insostenible para el tamaño del plantel.
+2. **`EXCLUIR_TURNOS`**: Prohíbe que 4 médicos realicen guardias de 24h (`G_Planta`). Esto los fuerza a cubrir únicamente turnos de 12h (`D_Planta` y `N_Planta`).
+3. **`DESCANSO_ENTRE_TURNOS` (36h para D/N)**: Al exigir un descanso de 36 horas posterior a cada guardia de 12h, los médicos limitados a estos turnos solo podían trabajar como máximo cada 2.5 días. Intentar cubrir su mínimo de horas mensuales bajo esta restricción saturaba su disponibilidad.
+4. **`EXACTO_FINDE_Y_DIA` (modo HARD)**: Obligaba a todos los profesionales a cumplir de forma estricta un target específico de viernes y fines de semana, lo cual chocaba directamente con las exclusiones y descansos de los médicos de 12h.
+
+### Modificaciones Aplicadas:
+- **Ajuste de Horas Mínimas**: Se bajó `MIN_HORAS_MES_CALENDARIO` de 185h a **168h** (equivalente a 7 guardias de 24h), un número coherente y balanceado para el plantel.
+- **Cambio de Modo de Regla**: Se cambió el modo de la regla `EXACTO_FINDE_Y_DIA` de `HARD` a **`SOFT`** en la base de datos (`servicios_reglas`), permitiendo que el solver distribuya equitativamente y penalice desvíos en lugar de fallar inmediatamente.
+- **Mantener Capacidad Máxima Balanceada**: Se validó la viabilidad con un límite de `cantidad_max = 6` médicos por turno en Planta. Al resolverse la incompatibilidad de las reglas, **el modelo generó de forma exitosa y óptima** sin necesidad de subir la capacidad a 8.
+- **Equidad Diaria**: Se activó `PESO_BRECHA_DIARIA_PERSONAL` como soft rule en la BD para evitar variaciones extremas de personal entre días.
+
+### Resultado de la Verificación:
+El cronograma se generó exitosamente con estado **`OPTIMAL`** en 43 segundos:
+- **Cronograma ID 236** (Julio 2027) guardado en la base de datos.
+- Archivo Excel de reporte generado correctamente: **`Cronograma_Area_Medica_UTI.xlsx`**.
+- El solver asignó los turnos respetando los descansos de 36h para el personal de 12h y distribuyendo con equidad los fines de semana.
+

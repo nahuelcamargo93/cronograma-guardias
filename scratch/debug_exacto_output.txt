@@ -1,0 +1,133 @@
+--- STDOUT ---
+Running manual _aplicar_exacto_finde_y_dia simulation:
+[Aguilera Graciela] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Arce Carolina] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Arias Guillermina] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Baracat Denisse] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Barloa Mat�as Dami�n] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Biscarra Joaqu�n Martin] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Diaz Villafa�e Morales Abigail] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Garcia Rodriguez, Maria Eugenia.] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Godoy Maria] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Matricadi Wendy Ailen] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Mora, Sergio Enrique] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  ASIGNACION_FIJA found on 2026-07-03 for Mora, Sergio Enrique
+  tiene_asig_fija_en_dia: True
+[Motta, Mayra Belen] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Moya, Pedro] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Murillo, Santiago] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Navarro Suarez Gabriela Bel�n] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Nesteruk Mar�a Silvia] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Noriega Claudio Mart�n] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Pacheco Celeste] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Palermo Agust�n] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Pregot Analia Mariana] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Quintero Anabela Belen] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Quiroga Sassu Maria Macarena] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Silva, Mart�n Enrique] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[S�nchez Reinoso Ana Bel�n] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Villegas Oliva Maria Bel�n] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+[Zeballos Valeria Alejandra] Modo: HARD
+  vars_findes count: 4, target_f_real: 2
+  tiene_asig_fija_en_dia: False
+  vars_dia count: 5, target_d_real: 2
+  Added HARD constraint: sum(vars_dia) == 2
+
+--- STDERR ---

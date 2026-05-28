@@ -1,22 +1,19 @@
-import sqlite3
-import json
+import sys; sys.path.insert(0,'.')
+from database.connection import get_connection
+conn = get_connection()
+cur = conn.cursor()
 
-def run_diag():
-    conn = sqlite3.connect("cronograma_inteligente.db")
-    conn.row_factory = sqlite3.Row
-    
-    print("=== REGLAS ACTIVAS PARA SERVICIO 2 ===")
-    rows = conn.execute("""
-        SELECT rc.codigo_regla, sr.parametros_json, rc.tipo, rc.descripcion
-        FROM servicios_reglas sr
-        JOIN reglas_catalogo rc ON sr.regla_id = rc.id
-        WHERE sr.servicio_id = 2
-    """).fetchall()
-    
-    for r in rows:
-        print(f"Código: {r['codigo_regla']} | Tipo: {r['tipo']} | Params: {r['parametros_json']}")
-        
-    conn.close()
+cur.execute("SELECT parametros_json FROM personal_reglas WHERE personal_nombre LIKE '%OJEDA%' AND codigo_regla='EXCLUIR_TURNOS'")
+print('OJEDA actual:', cur.fetchone())
 
-if __name__ == '__main__':
-    run_diag()
+cur.execute("SELECT personal_nombre, codigo_regla, parametros_json FROM personal_reglas WHERE personal_nombre LIKE '%BRIZUELA%'")
+print('BRIZUELA reglas:', cur.fetchall())
+
+# Check all service 4 rules
+cur.execute("SELECT codigo_regla, parametros_json FROM servicios_reglas WHERE servicio_id = 4")
+print()
+print('=== ALL SERVICE 4 RULES ===')
+for row in cur.fetchall():
+    print(row)
+
+conn.close()

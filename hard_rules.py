@@ -38,9 +38,12 @@ def aplicar_reglas_duras(
     historial_semana_previa: Dict[str, List[Dict]],
     reglas_servicio: Dict[str, Any],
     ajustes_reglas_personal: Dict[str, Any],
-    servicio_id: int
+    servicio_id: int,
+    fecha_inicio=None,
+    fecha_fin=None
 ):
-    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    ref_fecha_inicio = fecha_inicio if fecha_inicio else FECHA_INICIO
+    fecha_inicio_dt = date.fromisoformat(ref_fecha_inicio)
     semanas_calendario = _get_semanas_calendario(dias_del_bloque, fecha_inicio_dt)
 
     if 'MAX_HORAS_SEMANA' not in reglas_servicio:
@@ -60,10 +63,10 @@ def aplicar_reglas_duras(
     _aplicar_cobertura_dinamica(modelo, turnos_vars, empleados, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, turnos_dict, fecha_inicio_dt, historial_semana_previa, reglas_servicio, ajustes_reglas_personal)
     _aplicar_limite_horas_semanales(modelo, turnos_vars, empleados, semanas_calendario, reglas_servicio, ajustes_reglas_personal, historial_semana_previa, demanda_turnos, turnos_dict, offset_dia, feriados, limite_horas_global)
     _aplicar_descanso_entre_turnos(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, reglas_servicio, ajustes_reglas_personal, offset_dia, feriados, demanda_turnos, turnos_dict, historial_semana_previa)
-    _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, servicio_id)
-    _aplicar_exacto_dia_especifico_mes_hard(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, turnos_dict)
-    _aplicar_exacto_finde_y_dia(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, turnos_dict, modo_filtro="HARD")
-    _aplicar_findes_completos_y_medios(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque)
+    _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, servicio_id, fecha_inicio_dt=fecha_inicio_dt)
+    _aplicar_exacto_dia_especifico_mes_hard(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, turnos_dict, fecha_inicio_dt=fecha_inicio_dt)
+    _aplicar_exacto_finde_y_dia(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, turnos_dict, modo_filtro="HARD", fecha_inicio_dt=fecha_inicio_dt)
+    _aplicar_findes_completos_y_medios(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas_personal, dias_del_bloque, fecha_inicio_dt=fecha_inicio_dt)
     _aplicar_un_solo_turno_por_dia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
     _aplicar_patron_ciclico(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
     _aplicar_max_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
@@ -71,7 +74,7 @@ def aplicar_reglas_duras(
     _aplicar_min_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, fecha_inicio_dt, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
     _aplicar_reglas_fechas_especiales(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, demanda_turnos, reglas_servicio, ajustes_reglas_personal)
     _aplicar_balance_dia_noche(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal, fecha_inicio_dt)
-    _aplicar_personal_asociado(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal)
+    _aplicar_personal_asociado(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal, fecha_inicio_dt=fecha_inicio_dt)
     _aplicar_max_dias_continuos(modelo, turnos_vars, empleados, dias_del_bloque, fecha_inicio_dt, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas_personal, historial_semana_previa)
 
     # Aplicar mezcla semanal dura
@@ -86,8 +89,8 @@ def aplicar_reglas_duras(
 
 
 def _aplicar_balance_dia_noche(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, turnos_dict, reglas_servicio, ajustes_reglas, fecha_inicio_dt):
-    from data import FECHA_INICIO
-    p_regla = _re.resolver_parametros_regla('MAX_NOCHE_VS_DIA', 'GLOBAL', FECHA_INICIO, reglas_servicio, {}, {})
+    ref_fecha = fecha_inicio_dt.isoformat()
+    p_regla = _re.resolver_parametros_regla('MAX_NOCHE_VS_DIA', 'GLOBAL', ref_fecha, reglas_servicio, {}, {})
     if not _re.regla_existe(p_regla) or _re.regla_suspendida(p_regla):
         return
 
@@ -694,7 +697,8 @@ def _aplicar_max_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_b
 
 def _aplicar_fin_licencia(modelo, turnos_vars, empleados, dias_del_bloque, offset_dia, feriados, demanda_turnos, reglas_servicio, ajustes_reglas, fecha_inicio_dt):
     # Solo aplicar si la regla existe en el catálogo del servicio y no está suspendida
-    p_fin = _re.resolver_parametros_regla('FIN_LICENCIA', 'GLOBAL', FECHA_INICIO, reglas_servicio, {}, {})
+    ref_fecha = fecha_inicio_dt.isoformat()
+    p_fin = _re.resolver_parametros_regla('FIN_LICENCIA', 'GLOBAL', ref_fecha, reglas_servicio, {}, {})
     if not _re.regla_existe(p_fin) or _re.regla_suspendida(p_fin):
         return
 
@@ -769,17 +773,19 @@ def _aplicar_min_horas_mes_calendario(modelo, turnos_vars, empleados, dias_del_b
                 # Si vars_h está vacío y horas_lic < piso: el empleado está de licencia todo el mes,
                 # no se añade ninguna restricción (no hay horas que pueda trabajar).
 
-def _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, servicio_id=1, reglas_a_ignorar=None):
-    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+def _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, servicio_id=1, reglas_a_ignorar=None, fecha_inicio_dt=None):
+    if fecha_inicio_dt is None:
+        fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    ref_fecha = fecha_inicio_dt.isoformat()
     for emp in empleados:
         # Resolver parámetros para MIN_FINDES_MES o EXACTO_FINDES_MES
         params_min = None
         if not reglas_a_ignorar or 'MIN_FINDES_MES' not in reglas_a_ignorar:
-            params_min = _re.resolver_parametros_regla('MIN_FINDES_MES', emp.nombre, FECHA_INICIO, reglas_servicio, emp.reglas, ajustes_reglas)
+            params_min = _re.resolver_parametros_regla('MIN_FINDES_MES', emp.nombre, ref_fecha, reglas_servicio, emp.reglas, ajustes_reglas)
             
         params_exacto = None
         if not reglas_a_ignorar or 'EXACTO_FINDES_MES' not in reglas_a_ignorar:
-            params_exacto = _re.resolver_parametros_regla('EXACTO_FINDES_MES', emp.nombre, FECHA_INICIO, reglas_servicio, emp.reglas, ajustes_reglas)
+            params_exacto = _re.resolver_parametros_regla('EXACTO_FINDES_MES', emp.nombre, ref_fecha, reglas_servicio, emp.reglas, ajustes_reglas)
             
         has_min = _re.regla_existe(params_min) and not _re.regla_suspendida(params_min)
         has_exacto = _re.regla_existe(params_exacto) and not _re.regla_suspendida(params_exacto)
@@ -855,19 +861,21 @@ def _aplicar_min_findes_mes(modelo, turnos_vars, empleados, demanda_turnos, offs
                 modelo.Add(sum(vars_findes) >= target_real)
 
 
-def _aplicar_exacto_dia_especifico_mes_hard(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, turnos_dict):
+def _aplicar_exacto_dia_especifico_mes_hard(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, turnos_dict, fecha_inicio_dt=None):
     """Restricción DURA: exactamente N veces un día específico de la semana en el mes.
     Versión hard de EXACTO_DIA_ESPECIFICO_MES. No puede ser violada por el solver.
     Registrar en la BD con código 'EXACTO_DIA_ESPECIFICO_MES_HARD'.
     JSON: {"dia_semana": "Viernes", "exacto_dias": 1, "dinamico_licencias": true}
     """
     from collections import defaultdict
-    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    if fecha_inicio_dt is None:
+        fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    ref_fecha = fecha_inicio_dt.isoformat()
     mapa_dias = {"lunes": 0, "martes": 1, "miercoles": 2, "jueves": 3, "viernes": 4, "sabado": 5, "domingo": 6}
 
     for emp in empleados:
         params = _re.resolver_parametros_regla(
-            'EXACTO_DIA_ESPECIFICO_MES_HARD', emp.nombre, FECHA_INICIO,
+            'EXACTO_DIA_ESPECIFICO_MES_HARD', emp.nombre, ref_fecha,
             reglas_servicio, emp.reglas, ajustes_reglas
         )
         if not _re.regla_existe(params) or _re.regla_suspendida(params):
@@ -974,11 +982,14 @@ def _aplicar_findes_completos_y_medios(
     feriados: List[int],
     reglas_servicio: Dict[str, Any],
     ajustes_reglas: Dict[str, Any],
-    dias_del_bloque: int
+    dias_del_bloque: int,
+    fecha_inicio_dt=None
 ):
-    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    if fecha_inicio_dt is None:
+        fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    ref_fecha = fecha_inicio_dt.isoformat()
     for emp in empleados:
-        params = _re.resolver_parametros_regla('FINDES_COMPLETOS_Y_MEDIOS', emp.nombre, FECHA_INICIO, reglas_servicio, emp.reglas, ajustes_reglas)
+        params = _re.resolver_parametros_regla('FINDES_COMPLETOS_Y_MEDIOS', emp.nombre, ref_fecha, reglas_servicio, emp.reglas, ajustes_reglas)
         if not _re.regla_existe(params) or _re.regla_suspendida(params):
             continue
             
@@ -1264,15 +1275,19 @@ def _aplicar_personal_asociado(
     demanda_turnos: Dict,
     turnos_dict: Dict[str, Turno],
     reglas_servicio: Dict[str, Any],
-    ajustes_reglas: Dict[str, Any]
+    ajustes_reglas: Dict[str, Any],
+    fecha_inicio_dt=None
 ):
     """
     Regla dura: Los miembros de las parejas asociadas deben coincidir exactamente
     en sus franjas horarias de trabajo (hora_inicio, hora_fin) y francos
     en todo momento del cronograma.
     """
+    if fecha_inicio_dt is None:
+        fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    ref_fecha = fecha_inicio_dt.isoformat()
     params = _re.resolver_parametros_regla(
-        'PERSONAL_ASOCIADO', 'GLOBAL', FECHA_INICIO,
+        'PERSONAL_ASOCIADO', 'GLOBAL', ref_fecha,
         reglas_servicio, {}, {}
     )
     if not _re.regla_existe(params) or _re.regla_suspendida(params):
@@ -1548,7 +1563,8 @@ def _aplicar_rotacion_mensual_dura(
                 semanas_TN.append(v_dict['TN'])
                 semanas_N.append(v_dict['N'])
 
-        params_div = _re.resolver_parametros_regla('PENALIZACION_TURNO_AUSENTE', nombre, FECHA_INICIO, reglas_servicio, emp.reglas, ajustes_personal)
+        ref_fecha = fecha_inicio_dt.isoformat()
+        params_div = _re.resolver_parametros_regla('PENALIZACION_TURNO_AUSENTE', nombre, ref_fecha, reglas_servicio, emp.reglas, ajustes_personal)
         if _re.regla_existe(params_div) and not _re.regla_suspendida(params_div):
             mapping_div = {'M': semanas_M, 'T': semanas_T, 'TN': semanas_TN, 'N': semanas_N}
             
@@ -1633,14 +1649,16 @@ def _aplicar_max_dias_continuos(
                 modelo.Add(sum(window_vars) <= max_dias)
 
 
-def _aplicar_exacto_finde_y_dia(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, turnos_dict, modo_filtro="HARD", penalizaciones_ad_hoc=None):
+def _aplicar_exacto_finde_y_dia(modelo, turnos_vars, empleados, demanda_turnos, offset_dia, feriados, reglas_servicio, ajustes_reglas, dias_del_bloque, turnos_dict, modo_filtro="HARD", penalizaciones_ad_hoc=None, fecha_inicio_dt=None):
     from collections import defaultdict
-    fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    if fecha_inicio_dt is None:
+        fecha_inicio_dt = date.fromisoformat(FECHA_INICIO)
+    ref_fecha = fecha_inicio_dt.isoformat()
     mapa_dias = {"lunes": 0, "martes": 1, "miercoles": 2, "jueves": 3, "viernes": 4, "sabado": 5, "domingo": 6}
 
     for emp in empleados:
         params = _re.resolver_parametros_regla(
-            'EXACTO_FINDE_Y_DIA', emp.nombre, FECHA_INICIO,
+            'EXACTO_FINDE_Y_DIA', emp.nombre, ref_fecha,
             reglas_servicio, emp.reglas, ajustes_reglas
         )
         if not _re.regla_existe(params) or _re.regla_suspendida(params):

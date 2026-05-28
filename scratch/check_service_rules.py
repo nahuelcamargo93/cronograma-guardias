@@ -1,15 +1,15 @@
-import sqlite3
-import json
+import sqlite3, json
 
-conn = sqlite3.connect('cronograma_inteligente.db')
-cur = conn.cursor()
+con = sqlite3.connect('cronograma_inteligente.db')
+cur = con.cursor()
 
-print("--- Rules configured for Service 3 in servicios_reglas ---")
+print("=== SERVICIOS REGLAS para Servicio 3 ===")
 cur.execute("""
-    SELECT sr.id, rc.codigo_regla, sr.parametros_json
-    FROM servicios_reglas sr
-    JOIN reglas_catalogo rc ON sr.regla_id = rc.id
-    WHERE sr.servicio_id = 3
+    SELECT codigo_regla, activo, parametros_json 
+    FROM servicios_reglas 
+    WHERE servicio_id = 3
+    ORDER BY codigo_regla
 """)
-for row in cur.fetchall():
-    print(row)
+for r in cur.fetchall():
+    print(f"  {r[0]} | Activo: {r[1]} | Params: {r[2]}")
+con.close()

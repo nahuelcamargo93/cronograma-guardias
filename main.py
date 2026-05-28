@@ -10,7 +10,7 @@ from database import schema as db_schema
 from database.data_loader import obtener_empleados, obtener_turnos
 import rule_engine as _re
 
-def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, reglas_servicio, ajustes_reglas_personal=None, historial_semana_previa=None, servicio_id=1):
+def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, reglas_servicio, ajustes_reglas_personal=None, historial_semana_previa=None, servicio_id=1, fecha_inicio=None, fecha_fin=None):
     modelo = cp_model.CpModel()
     flr_tracker = {} # Para trackear variables booleanas de FLR y luego leerlas
 
@@ -20,7 +20,8 @@ def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajuste
     }
     
     turnos = {}
-    fecha_inicio_dt_d = date.fromisoformat(FECHA_INICIO)
+    ref_fecha_inicio = fecha_inicio if fecha_inicio else FECHA_INICIO
+    fecha_inicio_dt_d = date.fromisoformat(ref_fecha_inicio)
 
     for emp in empleados:
         nombre = emp.nombre
@@ -77,8 +78,8 @@ def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajuste
             if vars_dia:
                 modelo.Add(sum(vars_dia) <= 1)
 
-    vars_turno_sem = aplicar_reglas_duras(modelo, turnos, empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, historial_semana_previa, reglas_servicio, ajustes_reglas_personal, servicio_id)
-    vars_turno_sem = aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id, flr_tracker, historial_semana_previa, demanda_req=demanda_req, ajustes_demanda=ajustes_demanda, vars_turno_sem=vars_turno_sem)
+    vars_turno_sem = aplicar_reglas_duras(modelo, turnos, empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, historial_semana_previa, reglas_servicio, ajustes_reglas_personal, servicio_id, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
+    vars_turno_sem = aplicar_reglas_blandas(modelo, turnos, empleados, demanda_turnos, turnos_dict, dias_del_bloque, feriados, offset_dia, num_semanas, servicio_id, flr_tracker, historial_semana_previa, demanda_req=demanda_req, ajustes_demanda=ajustes_demanda, vars_turno_sem=vars_turno_sem, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
     
     return modelo, turnos, flr_tracker, vars_turno_sem
 
@@ -203,7 +204,9 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas=""):
         reglas_servicio=reglas_servicio_db,
         ajustes_reglas_personal=ajustes_reglas,
         historial_semana_previa=historial_semana_previa,
-        servicio_id=servicio_id
+        servicio_id=servicio_id,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin
     )
 
     df_resultados, flrs_asignados, df_cat_semanas = resolver_modelo(
