@@ -4,11 +4,10 @@ import sys
 import datetime
 from database import queries as db_queries
 from database.data_loader import obtener_empleados
-from data import FERIADOS
 # VARIABLE CONFIGURABLE DE ID DE CRONOGRAMA
 # Dejar en None para exportar el último cronograma de forma automática o elegir por consola.
 # Cambiar por un número entero (ej: 191) para forzar la exportación de un cronograma específico.
-CRONOGRAMA_ID_FORZADO = 230
+CRONOGRAMA_ID_FORZADO = None
 
 def main():
     conn = sqlite3.connect('cronograma_inteligente.db')
@@ -107,8 +106,9 @@ def main():
     total_dias = (fecha_fin_dt - fecha_inicio_dt).days + 1
     num_semanas = (total_dias + 6) // 7
 
+    feriados_db = db_queries.obtener_feriados(fecha_inicio, fecha_fin, servicio_id=servicio_id)
     feriados_indices = []
-    for f_str in FERIADOS:
+    for f_str in feriados_db:
         f_dt = datetime.datetime.strptime(f_str, "%Y-%m-%d")
         delta = (f_dt - fecha_inicio_dt).days
         if 0 <= delta < total_dias:
@@ -119,7 +119,7 @@ def main():
         servicio_id=servicio_id, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin
     )
     # Cargar licencias en memoria (LAR, LPP, LM, CM) — necesario para los reportes
-    db_queries.init_licencias()
+    db_queries.init_licencias(servicio_id)
     empleados = obtener_empleados(servicio_id, fecha_inicio, total_dias)
     offset_dia = fecha_inicio_dt.weekday()
 
@@ -147,16 +147,16 @@ def main():
     # 5. Exportar al Excel correspondiente
     try:
         if servicio_id == 1:
-            from reportes.kinesiologia import generar_y_exportar as gen_kin
+            from reportes.servicio_1_kinesiologia.kinesiologia import generar_y_exportar as gen_kin
             gen_kin(df_resultados, df_personal, total_dias, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, crono_id=crono_id)
         elif servicio_id == 2:
-            from reportes.enfermeria import generar_y_exportar as gen_enf
+            from reportes.servicio_2_enfermeria.enfermeria import generar_y_exportar as gen_enf
             gen_enf(df_resultados, df_personal, total_dias, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, flrs_asignados, df_cat_semanas, crono_id=crono_id)
         elif servicio_id == 3:
-            from reportes.medicos import generar_y_exportar as gen_med
+            from reportes.servicio_3_medicos.medicos import generar_y_exportar as gen_med
             gen_med(df_resultados, df_personal, total_dias, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, flrs_asignados, df_cat_semanas, crono_id=crono_id)
         elif servicio_id == 4:
-            from reportes.com import generar_y_exportar as gen_com
+            from reportes.servicio_4_monitoreo.com import generar_y_exportar as gen_com
             gen_com(df_resultados, df_personal, total_dias, feriados_indices, fecha_inicio, offset_dia, config_turnos, num_semanas, crono_id=crono_id)
             
         print(f"\n[SUCCESS] Reporte Excel generado con éxito para Servicio {servicio_id}!")

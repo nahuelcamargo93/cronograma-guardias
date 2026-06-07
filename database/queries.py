@@ -9,10 +9,63 @@ LPP = {}
 LM  = {}
 CM  = {}
 
-def init_licencias():
+def obtener_feriados(fecha_inicio=None, fecha_fin=None, servicio_id=None):
+    """
+    Retorna la lista de fechas de feriados (strings 'YYYY-MM-DD') en el rango.
+    Si se proporciona servicio_id, se excluyen los feriados excluidos para ese servicio.
+    Si no se especifican fechas, retorna todos los feriados de la base de datos (filtrados si aplica).
+    """
+    with get_connection() as conn:
+        if servicio_id is not None:
+            if fecha_inicio and fecha_fin:
+                query = """
+                    SELECT f.fecha FROM feriados f
+                    WHERE f.fecha BETWEEN ? AND ?
+                      AND f.fecha NOT IN (
+                          SELECT fe.fecha FROM feriados_exclusiones fe WHERE fe.servicio_id = ?
+                      )
+                    ORDER BY f.fecha
+                """
+                rows = conn.execute(query, (fecha_inicio, fecha_fin, servicio_id)).fetchall()
+            else:
+                query = """
+                    SELECT f.fecha FROM feriados f
+                    WHERE f.fecha NOT IN (
+                        SELECT fe.fecha FROM feriados_exclusiones fe WHERE fe.servicio_id = ?
+                    )
+                    ORDER BY f.fecha
+                """
+                rows = conn.execute(query, (servicio_id,)).fetchall()
+        else:
+            if fecha_inicio and fecha_fin:
+                rows = conn.execute(
+                    "SELECT fecha FROM feriados WHERE fecha BETWEEN ? AND ? ORDER BY fecha",
+                    (fecha_inicio, fecha_fin)
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT fecha FROM feriados ORDER BY fecha").fetchall()
+    return [r[0] for r in rows]
+
+def excluir_feriado_servicio(fecha, servicio_id):
+    """Inserta una exclusión para que un feriado no aplique a un servicio específico."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO feriados_exclusiones (fecha, servicio_id) VALUES (?, ?)",
+            (fecha, servicio_id)
+        )
+
+def incluir_feriado_servicio(fecha, servicio_id):
+    """Elimina una exclusión de feriado para un servicio específico."""
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM feriados_exclusiones WHERE fecha = ? AND servicio_id = ?",
+            (fecha, servicio_id)
+        )
+
+def init_licencias(servicio_id=None):
     """Carga LAR, LPP, LM y CM desde la BD en los dicts de módulo. Llamar una vez al inicio."""
     global LAR, LPP, LM, CM
-    raw = cargar_licencias_db()
+    raw = cargar_licencias_db(servicio_id=servicio_id)
     LAR.clear()
     LPP.clear()
     LM.clear()
@@ -128,17 +181,17 @@ def cargar_historial(df_personal, fecha_corte_str):
         """, (fecha_corte_str,)).fetchall())
 
         # Feriados trabajados históricos (solo de cronogramas aprobados)
-        from data import FERIADOS as data_feriados
-        placeholders = ",".join("?" for _ in data_feriados)
+        feriados_db = [r[0] for r in conn.execute("SELECT fecha FROM feriados").fetchall()]
+        placeholders = ",".join("?" for _ in feriados_db)
         feriados_trab_map = {}
-        if data_feriados:
+        if feriados_db:
             feriados_trab_map = dict(conn.execute(f"""
                 SELECT g.nombre, COUNT(DISTINCT g.fecha)
                 FROM guardias g
                 JOIN cronogramas c ON g.cronograma_id = c.id
                 WHERE g.fecha < ? AND c.estado = 'aprobado' AND g.fecha IN ({placeholders})
                 GROUP BY g.nombre
-            """, [fecha_corte_str] + data_feriados).fetchall())
+            """, [fecha_corte_str] + feriados_db).fetchall())
 
         # Fines de semana trabajados (solo de cronogramas aprobados)
         fstrab_map = dict(conn.execute("""
@@ -168,18 +221,52 @@ def cargar_historial(df_personal, fecha_corte_str):
 
         # Bloques de finde largo históricos (solo de cronogramas aprobados)
         bloques_rows = conn.execute("""
-            SELECT bfl.id, bfl.fecha_inicio, bfl.fecha_fin, bfl.tipo
+            SELECT DISTINCT bfl.fecha_inicio, bfl.fecha_fin, bfl.tipo
             FROM bloques_finde_largo bfl
             JOIN cronogramas c ON bfl.cronograma_id = c.id
             WHERE bfl.fecha_inicio < ? AND c.estado = 'aprobado'
         """, (fecha_corte_str,)).fetchall()
+
+        # Noches trabajadas históricas (solo de cronogramas aprobados, a partir de la fecha de inicio de nivelación)
+        servicio_id = None
+        if not df_personal.empty:
+            p_nom = df_personal.iloc[0]['Nombre']
+            row_serv = conn.execute("SELECT servicio_id FROM personal WHERE nombre = ?", (p_nom,)).fetchone()
+            if row_serv:
+                servicio_id = row_serv[0]
+
+        fecha_inicio_noches = None
+        if servicio_id is not None:
+            row_reg = conn.execute("""
+                SELECT parametros_json 
+                FROM servicios_reglas 
+                WHERE servicio_id = ? AND codigo_regla = 'PESO_BRECHA_TURNO' AND activo = 1
+            """, (servicio_id,)).fetchone()
+            if row_reg and row_reg[0]:
+                try:
+                    params = json.loads(row_reg[0])
+                    niv = params.get('nivelacion_historica', {})
+                    if niv.get('activo'):
+                        fecha_inicio_noches = niv.get('fecha_inicio')
+                except Exception:
+                    pass
+
+        noches_trab_map = {}
+        if fecha_inicio_noches:
+            noches_trab_map = dict(conn.execute("""
+                SELECT g.nombre, COUNT(*)
+                FROM guardias g
+                JOIN cronogramas c ON g.cronograma_id = c.id
+                WHERE g.fecha >= ? AND g.fecha < ? AND c.estado = 'aprobado' AND (g.turno = 'Noche' OR g.turno LIKE '%Noche%')
+                GROUP BY g.nombre
+            """, (fecha_inicio_noches, fecha_corte_str)).fetchall())
 
     # Para cada bloque: ¿quién trabajó? (solo guardias de cronogramas aprobados)
     fl3_trab = {n: 0 for n in df_personal['Nombre']}
     fl4_trab = {n: 0 for n in df_personal['Nombre']}
 
     with get_connection() as conn:
-        for bloque_id, fi, ff, tipo in bloques_rows:
+        for fi, ff, tipo in bloques_rows:
             trabajaron = {r[0] for r in conn.execute("""
                 SELECT DISTINCT g.nombre FROM guardias g
                 JOIN cronogramas c ON g.cronograma_id = c.id
@@ -204,6 +291,7 @@ def cargar_historial(df_personal, fecha_corte_str):
             'Findes_Largos_4_Previos': fl4_trab.get(nombre, 0),
             'Fecha_Inicio_Historial':  fecha_ini_map.get(nombre),
             'Feriados_Previos':        feriados_trab_map.get(nombre, 0),
+            'Noches_Previas':          noches_trab_map.get(nombre, 0),
         }
     return resultado
 
@@ -375,26 +463,47 @@ def insertar_licencia(nombre, tipo, fecha_inicio, fecha_fin):
               nombre, tipo, fecha_inicio, fecha_fin))
 
 
-def cargar_licencias_db(fecha_inicio_str=None, fecha_fin_str=None):
+def cargar_licencias_db(fecha_inicio_str=None, fecha_fin_str=None, servicio_id=None):
     """
     Devuelve todas las licencias que se superponen con el rango dado.
+    Si se proporciona servicio_id, solo devuelve las licencias del personal de ese servicio.
     Si no se pasan fechas, devuelve todas.
     Formato: dict {nombre: [(tipo, fecha_inicio, fecha_fin), ...]}
     """
     with get_connection() as conn:
-        if fecha_inicio_str and fecha_fin_str:
-            rows = conn.execute("""
-                SELECT nombre, tipo, fecha_inicio, fecha_fin
-                FROM licencias
-                WHERE fecha_inicio <= ? AND fecha_fin >= ?
-                ORDER BY nombre, fecha_inicio
-            """, (fecha_fin_str, fecha_inicio_str)).fetchall()
+        if servicio_id is not None:
+            if fecha_inicio_str and fecha_fin_str:
+                query = """
+                    SELECT l.nombre, l.tipo, l.fecha_inicio, l.fecha_fin
+                    FROM licencias l
+                    JOIN personal p ON l.nombre = p.nombre
+                    WHERE p.servicio_id = ? AND l.fecha_inicio <= ? AND l.fecha_fin >= ?
+                    ORDER BY l.nombre, l.fecha_inicio
+                """
+                rows = conn.execute(query, (servicio_id, fecha_fin_str, fecha_inicio_str)).fetchall()
+            else:
+                query = """
+                    SELECT l.nombre, l.tipo, l.fecha_inicio, l.fecha_fin
+                    FROM licencias l
+                    JOIN personal p ON l.nombre = p.nombre
+                    WHERE p.servicio_id = ?
+                    ORDER BY l.nombre, l.fecha_inicio
+                """
+                rows = conn.execute(query, (servicio_id,)).fetchall()
         else:
-            rows = conn.execute("""
-                SELECT nombre, tipo, fecha_inicio, fecha_fin
-                FROM licencias
-                ORDER BY nombre, fecha_inicio
-            """).fetchall()
+            if fecha_inicio_str and fecha_fin_str:
+                rows = conn.execute("""
+                    SELECT nombre, tipo, fecha_inicio, fecha_fin
+                    FROM licencias
+                    WHERE fecha_inicio <= ? AND fecha_fin >= ?
+                    ORDER BY nombre, fecha_inicio
+                """, (fecha_fin_str, fecha_inicio_str)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT nombre, tipo, fecha_inicio, fecha_fin
+                    FROM licencias
+                    ORDER BY nombre, fecha_inicio
+                """).fetchall()
 
     resultado = {}
     for nombre, tipo, fi, ff in rows:
@@ -671,5 +780,36 @@ def cargar_ajustes_reglas_servicio(fecha_inicio, fecha_fin, servicio_id):
             'params':       json.loads(params) if params else None
         })
     return resultado
+
+
+def guardar_infracciones(cronograma_id, infracciones):
+    """
+    Persiste en la base de datos las infracciones encontradas en modo debug.
+    infracciones: list de tuplas (codigo_regla, detalle)
+    """
+    with get_connection() as conn:
+        for codigo_regla, detalle in infracciones:
+            conn.execute("""
+                INSERT INTO infracciones_debug (cronograma_id, codigo_regla, detalle)
+                VALUES (?, ?, ?)
+            """, (cronograma_id, codigo_regla, detalle))
+    print(f"[OK] Guardadas {len(infracciones)} infracciones en DB para Cronograma ID {cronograma_id}")
+
+
+def obtener_infracciones(cronograma_id):
+    """
+    Recupera las infracciones guardadas para un cronograma_id,
+    incluyendo su descripción del catálogo de reglas.
+    Retorna: list de tuplas (codigo_regla, descripcion_regla, detalle)
+    """
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT i.codigo_regla, COALESCE(r.descripcion, 'Regla del sistema') as descripcion, i.detalle
+            FROM infracciones_debug i
+            LEFT JOIN reglas_catalogo r ON i.codigo_regla = r.codigo_regla
+            WHERE i.cronograma_id = ?
+            ORDER BY i.id
+        """, (cronograma_id,)).fetchall()
+    return rows
 
 

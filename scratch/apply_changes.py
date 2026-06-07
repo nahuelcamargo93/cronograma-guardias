@@ -1,66 +1,70 @@
 import sqlite3
-import subprocess
+import os
+import json
 
-def main():
-    conn = sqlite3.connect('cronograma_inteligente.db')
-    cursor = conn.cursor()
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cronograma_inteligente.db")
+conn = sqlite3.connect(DB_PATH)
+cursor = conn.cursor()
+
+try:
+    # 1. Obtener id del puesto Especial para el servicio 1
+    cursor.execute("SELECT id FROM puestos WHERE nombre = 'Especial' AND servicio_id = 1")
+    puesto_row = cursor.fetchone()
+    if not puesto_row:
+        raise ValueError("No se encontró el puesto 'Especial' para el servicio 1.")
+    puesto_id = puesto_row[0]
+    print(f"Puesto 'Especial' encontrado con ID: {puesto_id}")
+
+    # 2. Insertar el turno Dia_especial en turnos_config
+    # Verificamos si ya existe
+    cursor.execute("SELECT id FROM turnos_config WHERE nombre = 'Dia_especial' AND servicio_id = 1")
+    turno_row = cursor.fetchone()
     
-    print("=== APLICANDO CAMBIOS PARA EL CRONOGRAMA 152 ===")
-    
-    # 1. Dia 20/06 - Garcia Rodriguez cambia N_Planta por D_Planta
+    if not turno_row:
+        cursor.execute("""
+            INSERT INTO turnos_config (servicio_id, nombre, hora_inicio, horas, dias_semana, orden, activo, puesto_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (1, 'Dia_especial', '08:00', 12, '0,1,2,3,4,5,6', 10, 1, puesto_id))
+        print("Turno 'Dia_especial' insertado correctamente.")
+    else:
+        cursor.execute("""
+            UPDATE turnos_config 
+            SET hora_inicio = '08:00', horas = 12, dias_semana = '0,1,2,3,4,5,6', orden = 10, activo = 1, puesto_id = ?
+            WHERE id = ?
+        """, (puesto_id, turno_row[0]))
+        print("Turno 'Dia_especial' actualizado correctamente.")
+
+    # 3. Actualizar la regla ASIGNACION_FIJA de Lic. Coniglio
+    # Verificamos si existe el registro
     cursor.execute("""
-        UPDATE guardias 
-        SET turno = 'D_Planta' 
-        WHERE cronograma_id = 152 
-          AND nombre = 'Garcia Rodriguez, Maria Eugenia.' 
-          AND fecha = '2026-06-20' 
-          AND turno = 'N_Planta'
+        SELECT id, parametros_json FROM personal_reglas 
+        WHERE personal_nombre = 'Lic. Coniglio' AND codigo_regla = 'ASIGNACION_FIJA'
     """)
-    print(f"García 20/06 (N_Planta -> D_Planta): Filas afectadas: {cursor.rowcount}")
-    
-    # 2. Dia 20/06 - Nuñez cambia D_Residente por N_Residente
-    # Primero borramos D_Residente por si existiera
-    cursor.execute("""
-        DELETE FROM guardias 
-        WHERE cronograma_id = 152 
-          AND nombre = 'N\u00fa\u00f1ez Florencia Natalia' 
-          AND fecha = '2026-06-20' 
-          AND turno = 'D_Residente'
-    """)
-    del_count = cursor.rowcount
-    
-    # Insertamos N_Residente (es_finde = 1 porque es Sábado)
-    cursor.execute("""
-        INSERT INTO guardias (cronograma_id, nombre, fecha, turno, horas, es_finde) 
-        VALUES (152, 'N\u00fa\u00f1ez Florencia Natalia', '2026-06-20', 'N_Residente', 12, 1)
-    """)
-    print(f"Núñez 20/06 (D_Residente -> N_Residente): Eliminados {del_count}, Insertado N_Residente")
-    
-    # 3. Dia 21/06 - Aguilera cambia N_Planta por D_Planta
-    cursor.execute("""
-        UPDATE guardias 
-        SET turno = 'D_Planta' 
-        WHERE cronograma_id = 152 
-          AND nombre = 'Aguilera Graciela' 
-          AND fecha = '2026-06-21' 
-          AND turno = 'N_Planta'
-    """)
-    print(f"Aguilera 21/06 (N_Planta -> D_Planta): Filas afectadas: {cursor.rowcount}")
-    
-    # 4. Dia 21/06 - Motta cambia D_Planta por N_Planta
-    cursor.execute("""
-        UPDATE guardias 
-        SET turno = 'N_Planta' 
-        WHERE cronograma_id = 152 
-          AND nombre = 'Motta, Mayra Belen' 
-          AND fecha = '2026-06-21' 
-          AND turno = 'D_Planta'
-    """)
-    print(f"Motta 21/06 (D_Planta -> N_Planta): Filas afectadas: {cursor.rowcount}")
-    
+    regla_row = cursor.fetchone()
+
+    nuevo_json = json.dumps([
+        {"Dia": "Miercoles", "Turno": "Dia_especial", "Tipo": "Especial", "Horas": 12}
+    ])
+
+    if regla_row:
+        cursor.execute("""
+            UPDATE personal_reglas 
+            SET parametros_json = ? 
+            WHERE id = ?
+        """, (nuevo_json, regla_row[0]))
+        print(f"Regla ASIGNACION_FIJA de Lic. Coniglio actualizada correctamente. JSON anterior: {regla_row[1]}")
+    else:
+        cursor.execute("""
+            INSERT INTO personal_reglas (personal_nombre, codigo_regla, parametros_json, activo, servicio_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, ('Lic. Coniglio', 'ASIGNACION_FIJA', nuevo_json, 1, 1))
+        print("Regla ASIGNACION_FIJA de Lic. Coniglio creada correctamente.")
+
     conn.commit()
-    conn.close()
-    print("\n[OK] Cambios guardados en la base de datos.")
+    print("Transacción guardada con éxito.")
 
-if __name__ == '__main__':
-    main()
+except Exception as e:
+    conn.rollback()
+    print(f"Error al aplicar cambios: {e}")
+finally:
+    conn.close()

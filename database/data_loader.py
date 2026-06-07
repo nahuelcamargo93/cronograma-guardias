@@ -54,6 +54,7 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
             findes_largos_3_previos=hist.get('Findes_Largos_3_Previos', 0),
             findes_largos_4_previos=hist.get('Findes_Largos_4_Previos', 0),
             feriados_previos=hist.get('Feriados_Previos', 0),
+            noches_previas=hist.get('Noches_Previas', 0),
             horas_fijas_semanales=horas_fijas,
             dias_licencia=get_dias_licencia(nombre, fecha_inicio_dt, dias_del_bloque),
             puestos_habilitados=set(row.get('Puestos_Habilitados', [])),

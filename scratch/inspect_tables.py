@@ -1,22 +1,23 @@
 import sqlite3
 
-def main():
-    conn = sqlite3.connect('cronograma_inteligente.db')
-    cursor = conn.cursor()
-    
-    # List all tables
-    print("=== TABLES ===")
-    tables = cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    for t in tables:
-        print("Table:", t[0])
-        # Print schema for the table if it looks like rules or assignments
-        if 'reglas' in t[0] or 'ajustes' in t[0] or 'asignacion' in t[0] or 'fija' in t[0]:
-            print(f"\nSchema for {t[0]}:")
-            schema = cursor.execute(f"PRAGMA table_info({t[0]})").fetchall()
-            for col in schema:
-                print(f"  Col: {col[1]} | Type: {col[2]}")
-                
-    conn.close()
+conn = sqlite3.connect("cronograma_inteligente.db")
+cursor = conn.cursor()
 
-if __name__ == '__main__':
-    main()
+for table in ["guardias", "feriados", "feriados_exclusiones"]:
+    cursor.execute(f"PRAGMA table_info({table});")
+    info = cursor.fetchall()
+    print(f"\nTabla: {table}")
+    for col in info:
+        print(f"  {col[1]} ({col[2]})")
+
+cursor.execute("SELECT * FROM feriados LIMIT 20;")
+print("\nEjemplos de feriados:")
+for r in cursor.fetchall():
+    print(r)
+
+cursor.execute("SELECT * FROM guardias LIMIT 5;")
+print("\nEjemplos de guardias:")
+for r in cursor.fetchall():
+    print(r)
+
+conn.close()

@@ -23,10 +23,10 @@ LM: dict = {}
 CM: dict = {}
 
 
-def init_licencias():
+def init_licencias(servicio_id=None):
     """Carga LAR, LPP, LM y CM desde la BD en los dicts de módulo. Llamar una vez al inicio."""
     global LAR, LPP, LM, CM
-    raw = cargar_licencias_db()
+    raw = cargar_licencias_db(servicio_id=servicio_id)
     LAR = {}
     LPP = {}
     LM = {}
@@ -45,7 +45,15 @@ def init_licencias():
     # Cargar FLRs asignados como LAR para que sean intocables
     with get_connection() as conn:
         try:
-            flrs = conn.execute("SELECT nombre, fecha_inicio, fecha_fin FROM flr_asignados").fetchall()
+            if servicio_id is not None:
+                flrs = conn.execute("""
+                    SELECT f.nombre, f.fecha_inicio, f.fecha_fin
+                    FROM flr_asignados f
+                    JOIN personal p ON f.nombre = p.nombre
+                    WHERE p.servicio_id = ?
+                """, (servicio_id,)).fetchall()
+            else:
+                flrs = conn.execute("SELECT nombre, fecha_inicio, fecha_fin FROM flr_asignados").fetchall()
             for nombre, fi, ff in flrs:
                 LAR.setdefault(nombre, []).append((fi, ff))
         except sqlite3.OperationalError:
@@ -549,6 +557,7 @@ def inicializar_datos_wfm():
             
             ('Dia_UTI', '08:00', 12, '0,1,2,3,4,5,6', p_uti, 4),
             ('Dia_UCO', '08:00', 12, '0,1,2,3,4,5,6', p_uco, 5),
+            ('Dia_especial', '08:00', 12, '0,1,2,3,4,5,6', p_esp, 10),
             
             ('Tarde_UTI', '14:00', 6, '0,1,2,3,4', p_uti, 6),
             ('Tarde_UCO', '14:00', 6, '0,1,2,3,4', p_uco, 7),
@@ -628,7 +637,7 @@ def inicializar_catalogo_reglas():
         ('DIA_MADRE_PADRE_LIBRE', 'HARD', 'El profesional tiene franco obligatorio el día de la madre o del padre según corresponda'),
         ('PESO_BRECHA_MENSUAL_CALENDARIO', 'SOFT', 'Peso de penalización por diferencia de horas en el mes calendario'),
         ('PESO_EQUIDAD_FINDES_MENSUAL_CALENDARIO', 'SOFT', 'Peso de penalización por desigualdad de findes en mes calendario'),
-        ('LIMITES_SOFT_RULES', 'SOFT', 'Límites base para dimensionar el solver (Semanas_Base, Min_Horas, Max_Horas_Limite, etc)'),
+        ('LIMITES_SOFT_RULES', 'SOFT', 'Límite superior de horas mensuales para dimensionar variables del solver (MAX_HORAS_LIMITE_BASE)'),
         ('MAX_HORAS_MES_CALENDARIO', 'HARD', 'Límite máximo estricto de horas a trabajar por mes calendario. JSON: {"max_horas": 144}'),
         ('DESCANSO_ENTRE_TURNOS', 'HARD', 'Horas mínimas de descanso entre el fin de un turno y el comienzo del siguiente. JSON: {"horas": 12}'),
         ('FRANCO_FORZADO', 'HARD', 'Fuerza un día libre para la persona en una fecha o rango de fechas concreto. Se configura via personal_reglas_ajustes con accion=SOBRESCRIBIR. No necesita parametros adicionales. Ej: accion=SOBRESCRIBIR, fecha_inicio=2026-06-10, fecha_fin=2026-06-10, parametros_json={}'),
@@ -644,6 +653,8 @@ def inicializar_catalogo_reglas():
         ('PESO_EQUIDAD_FERIADOS', 'SOFT', 'Peso de penalización por desigualdad en feriados trabajados anuales'),
         ('PENALIZACION_PUESTO_NO_PREFERIDO', 'SOFT', 'Penaliza cuando una persona es asignada a un turno de un puesto que NO es su puesto primario (según personal_puestos.es_primario). Útil para desincentivar que residentes cubran puestos de planta. JSON: {"peso": 500}'),
         ('PENALIZACION_TURNO', 'SOFT', 'Penaliza la asignacion de un turno especifico a una persona, con un peso configurable. Soporta lista de items. JSON: [{"turno": "N_Planta", "peso": 200, "solo_finde": false}]'),
+        ('MAX_FRANCOS_SEMANA', 'HARD', 'Límite máximo de francos por semana calendario'),
+        ('ORDEN_ROTACION_SEMANAL', 'HARD', 'Restricción de orden ideal de rotación de turnos semanal (T -> M -> N -> TN)'),
     ]
     with get_connection() as conn:
         for codigo, tipo, desc in reglas_base:
@@ -963,26 +974,47 @@ def insertar_licencia(nombre, tipo, fecha_inicio, fecha_fin):
               nombre, tipo, fecha_inicio, fecha_fin))
 
 
-def cargar_licencias_db(fecha_inicio_str=None, fecha_fin_str=None):
+def cargar_licencias_db(fecha_inicio_str=None, fecha_fin_str=None, servicio_id=None):
     """
     Devuelve todas las licencias que se superponen con el rango dado.
+    Si se proporciona servicio_id, solo devuelve las licencias del personal de ese servicio.
     Si no se pasan fechas, devuelve todas.
     Formato: dict {nombre: [(tipo, fecha_inicio, fecha_fin), ...]}
     """
     with get_connection() as conn:
-        if fecha_inicio_str and fecha_fin_str:
-            rows = conn.execute("""
-                SELECT nombre, tipo, fecha_inicio, fecha_fin
-                FROM licencias
-                WHERE fecha_inicio <= ? AND fecha_fin >= ?
-                ORDER BY nombre, fecha_inicio
-            """, (fecha_fin_str, fecha_inicio_str)).fetchall()
+        if servicio_id is not None:
+            if fecha_inicio_str and fecha_fin_str:
+                query = """
+                    SELECT l.nombre, l.tipo, l.fecha_inicio, l.fecha_fin
+                    FROM licencias l
+                    JOIN personal p ON l.nombre = p.nombre
+                    WHERE p.servicio_id = ? AND l.fecha_inicio <= ? AND l.fecha_fin >= ?
+                    ORDER BY l.nombre, l.fecha_inicio
+                """
+                rows = conn.execute(query, (servicio_id, fecha_fin_str, fecha_inicio_str)).fetchall()
+            else:
+                query = """
+                    SELECT l.nombre, l.tipo, l.fecha_inicio, l.fecha_fin
+                    FROM licencias l
+                    JOIN personal p ON l.nombre = p.nombre
+                    WHERE p.servicio_id = ?
+                    ORDER BY l.nombre, l.fecha_inicio
+                """
+                rows = conn.execute(query, (servicio_id,)).fetchall()
         else:
-            rows = conn.execute("""
-                SELECT nombre, tipo, fecha_inicio, fecha_fin
-                FROM licencias
-                ORDER BY nombre, fecha_inicio
-            """).fetchall()
+            if fecha_inicio_str and fecha_fin_str:
+                rows = conn.execute("""
+                    SELECT nombre, tipo, fecha_inicio, fecha_fin
+                    FROM licencias
+                    WHERE fecha_inicio <= ? AND fecha_fin >= ?
+                    ORDER BY nombre, fecha_inicio
+                """, (fecha_fin_str, fecha_inicio_str)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT nombre, tipo, fecha_inicio, fecha_fin
+                    FROM licencias
+                    ORDER BY nombre, fecha_inicio
+                """).fetchall()
 
     resultado = {}
     for nombre, tipo, fi, ff in rows:

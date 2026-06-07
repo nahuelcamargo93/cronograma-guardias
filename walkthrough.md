@@ -96,3 +96,70 @@ El cronograma se generó exitosamente con estado **`OPTIMAL`** en 43 segundos:
 - Archivo Excel de reporte generado correctamente: **`Cronograma_Area_Medica_UTI.xlsx`**.
 - El solver asignó los turnos respetando los descansos de 36h para el personal de 12h y distribuyendo con equidad los fines de semana.
 
+---
+
+## 6. Depuración de Dependencias Globales y CLI (Tarea 3.1)
+
+Se desacoplaron todas las dependencias estáticas rígidas del archivo `data.py` (el cual fue eliminado del repositorio) en favor de un diseño completamente dinámico alimentado por argumentos de CLI y consultas directas a la base de datos.
+
+### Cambios Realizados:
+1. **Migración de Feriados a la DB:** Se creó y pobló la tabla `feriados` en la base de datos con los feriados nacionales base (25 de mayo, 15 de junio, 20 de junio y 9 de julio).
+2. **Cálculo Dinámico de Fechas Especiales:** Se actualizó `restricciones/hard/fechas_especiales.py` para calcular el día del padre (3er domingo de junio) y de la madre (3er domingo de octubre) de manera dinámica según el año de ejecución del cronograma.
+3. **Feriados e Historial Parametrizados:** Se modificó `database/queries.py` para extraer feriados e historial directamente de la base de datos sin importar archivos externos.
+4. **Refactorización de CLI:** Se actualizó `main.py` reemplazando la importación estática con un parseador de argumentos robusto (`argparse`) que permite configurar el `servicio_id`, la fecha de inicio, la fecha de fin y notas de forma dinámica:
+   ```bash
+   python main.py --servicio 1 --inicio 2026-07-01 --fin 2026-07-31
+   ```
+5. **Corrección de Tests:** Se actualizaron `soft_rules.py`, `hard_rules.py` y `test_cargador.py` para sincronizarse con la carga dinámica de feriados y fechas.
+
+### Verificación:
+* Se ejecutó el script comparador `test_cargador.py`, validando que tanto la versión legacy como la nueva basada en cargador de micro-reglas son factibles y coinciden en sus resultados con un margen del `1.7%` (menor al 5% requerido).
+* Se ejecutó exitosamente la optimización CLI para el Servicio 1.
+
+
+## 7. Implementación del Postprocesador (Tarea 3.2)
+
+Se implementó el componente [postprocesador.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/database/postprocesador.py) para independizar el motor matemático (OR-Tools) de la persistencia de datos y de la base de datos de producción.
+
+### Detalles:
+1. **Traducción Híbrida Inteligente:** El postprocesador recibe la matriz de variables de decisión del solver y detecta si el motor está utilizando IDs numéricos (nueva arquitectura) o strings tradicionales (arquitectura legacy), traduciendo los resultados al nombre real de la persona y del turno de forma transparente.
+2. **Persistencia Atómica:** Las inserciones en las tablas `cronogramas`, `guardias`, `bloques_finde_largo`, `semanas_categorias` y `flr_asignados` se ejecutan bajo una sola transacción SQLite atómica.
+3. **Carga Automática de Horas:** Recupera las horas de cada turno directamente a través de `Traductor.horas_turno` o como fallback seguro desde la base de datos, eliminando la duplicación de código que existía en `queries.py`.
+4. Verificación Exitosa:
+   - Se desarrolló y ejecutó el script [test_postprocesador.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/scratch/test_postprocesador.py) confirmando que ambas modalidades (IDs numéricos y Strings legacy) persisten los datos de manera idéntica e impecable en la base de datos `cronograma_inteligente.db`.
+
+---
+
+## 8. Estructura de Carpetas de Reportes (Tarea 4.1)
+
+Se organizaron y segmentaron los generadores de reportes del directorio `reportes/` para lograr un desacoplamiento visual y por tipo de servicio/negocio.
+
+### Cambios Realizados:
+1. **Creación de Subcarpetas:** Se estructuró el directorio `reportes/` en subcarpetas específicas:
+   - `generales/`: Contiene el archivo base de estilos y reportes compartidos.
+   - `servicio_1_kinesiologia/`: Generador de reportes de Kinesiología Crítica.
+   - `servicio_2_enfermeria/`: Generador de reportes de Enfermería UTI.
+   - `servicio_3_medicos/`: Generador de reportes de Médicos UTI.
+   - `servicio_4_monitoreo/`: Generador de reportes de Personal de Monitoreo (COM).
+2. **Reubicación de Archivos y Ajuste de Imports:** 
+   - `base.py` se movió a `reportes/generales/base.py`.
+   - `kinesiologia.py` a `reportes/servicio_1_kinesiologia/kinesiologia.py`.
+   - `enfermeria.py` a `reportes/servicio_2_enfermeria/enfermeria.py`.
+   - `medicos.py` a `reportes/servicio_3_medicos/medicos.py`.
+   - `com.py` a `reportes/servicio_4_monitoreo/com.py`.
+   - Se actualizaron todos los imports internos en cada uno de estos archivos para apuntar correctamente a `reportes.generales.base`.
+3. **Desacoplamiento del Archivo `data.py` (Feriados):**
+   - Se removió la dependencia del extinto archivo `data.py` (eliminado en la Tarea 3.1) en todos los scripts de reportes específicos (`enfermeria.py`, `medicos.py`, `com.py`) y en el script de prueba `scratch/test_excel_gen.py`.
+   - Los reportes ahora obtienen la lista de feriados directamente de la base de datos a través de `database.queries.obtener_feriados`.
+4. **Actualización de Consumidores:**
+   - Se actualizaron las importaciones dinámicas en `main.py` y `exportar_ultimo_cronograma.py` para usar las nuevas ubicaciones de los archivos de reportes.
+   - Se actualizó el script `scratch/test_excel_gen.py` para sincronizarlo con el nuevo esquema de módulos y la carga de feriados de la base de datos.
+5. **Eliminación de Archivos Obsoletos:** Se eliminaron los archivos `.py` redundantes ubicados en la raíz del directorio `reportes/`.
+
+### Verificación Exitosa:
+* Se ejecutó el script de verificación `scratch/test_excel_gen.py` con el comando `$env:PYTHONPATH="."; .\venv\Scripts\python scratch/test_excel_gen.py` y completó exitosamente.
+* Se generaron con éxito los cuatro archivos Excel correspondientes a los diferentes servicios:
+  - `Cronograma_Servicio_Kinesiologia.xlsx`
+  - `Cronograma_Enfermeria_UTI_actualizado.xlsx`
+  - `Cronograma_Area_Medica_UTI.xlsx`
+  - `Cronograma_Servicio_COM.xlsx`

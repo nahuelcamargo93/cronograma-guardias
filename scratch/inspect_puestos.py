@@ -1,29 +1,22 @@
 import sqlite3
-import os
-import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.connection import get_connection
+conn = sqlite3.connect('cronograma_inteligente.db')
+cursor = conn.cursor()
 
-def inspect():
-    conn = get_connection()
-    print("=== PERSONAL PUESTOS HABILITADOS ===")
-    names = ['FERNANDEZ Claudia Elizabeth', 'GUERRIDO Noelia']
-    for name in names:
-        puestos = conn.execute("""
-            SELECT p.nombre, p.id
-            FROM personal_puestos pp
-            JOIN puestos p ON pp.puesto_id = p.id
-            WHERE pp.personal_nombre = ?
-        """, (name,)).fetchall()
-        print(f"\nEmployee: {name}")
-        for pst in puestos:
-            print(f"  Puesto: {pst[0]} (ID: {pst[1]})")
+print("=== PUESTOS HABILITADOS Y PRIMARIOS EN SERVICIO 3 ===")
+cursor.execute("""
+    SELECT pp.personal_nombre, p.nombre, COALESCE(pp.es_primario, 1)
+    FROM personal_puestos pp
+    JOIN puestos p ON pp.puesto_id = p.id
+    WHERE p.servicio_id = 3 AND (pp.personal_nombre = 'Aguilera Graciela' OR pp.personal_nombre LIKE '%Garcia Rodriguez%')
+""")
+for r in cursor.fetchall():
+    print(r)
 
-    print("\n=== ALL PUESTOS IN SERVICIO 4 ===")
-    puestos = conn.execute("SELECT id, nombre FROM puestos WHERE servicio_id = 4").fetchall()
-    for p in puestos:
-        print(f"  Puesto ID: {p[0]}, Nombre: {p[1]}")
+# Ver todos los puestos de la base de datos para el servicio 3
+print("\n=== TODOS LOS PUESTOS DEL SERVICIO 3 ===")
+cursor.execute("SELECT id, nombre FROM puestos WHERE servicio_id = 3")
+for r in cursor.fetchall():
+    print(r)
 
-if __name__ == "__main__":
-    inspect()
+conn.close()

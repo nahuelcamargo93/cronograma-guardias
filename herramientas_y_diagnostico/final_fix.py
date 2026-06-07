@@ -14,26 +14,26 @@ def update_db():
 
     # 2. Mapping
     mapping = {
-        "Camargo nahuel": "Lic. Camargo N.",
-        "Garcia Luciano": "Lic. Garcia",
-        "Giacoppo Veronica": "Lic. Giaccoppo",
-        "Sosa Nicolas": "Lic. Sosa",
-        "Juarez Eduardo": "Lic. Juarez",
-        "Guardia Gabriel": "Lic. Guardia",
-        "Toleado Andrea": "Lic. Toledo",
-        "Moyano Fernando": "Lic. Moyano",
-        "Emiliano Marino": "Lic. Marino",
-        "Bruno Mesa": "Lic. Mesa",
-        "Danae Syiriani": "Lic. Syriani",
-        "Franco Leonforte": "Lic. Leonforte",
-        "Guzman, Ariel": "Lic. Guzman",
-        "Flores": "Lic. Flores",
-        "Franco, Leandro": "Lic. Franco",
-        "Melisa Coniglio": "Lic. Coniglio",
-        "Lucas Welch": "Lic. Welch",
-        "Elizabeth Espinosa": "Lic. Espinosa",
-        "Nicolas Vander": "Lic. Vander",
-        "Eric Vivas": "Lic. Vivas"
+        "Camargo nahuel": "Camargo, Nahuel",
+        "Garcia Luciano": "Garcia, Luciano",
+        "Giacoppo Veronica": "Giacoppo, Veronica",
+        "Sosa Nicolas": "Sosa, Nicolas",
+        "Juarez Eduardo": "Juarez, Eduardo",
+        "Guardia Gabriel": "Guardia, Gabriel",
+        "Toleado Andrea": "Toledo, Andrea",
+        "Moyano Fernando": "Moyano, Fernando",
+        "Emiliano Marino": "Marino, Emiliano",
+        "Bruno Mesa": "Mesa, Bruno",
+        "Danae Syiriani": "Syriani, Danae",
+        "Franco Leonforte": "Leonforte, Franco",
+        "Guzman, Ariel": "Guzman, Ariel",
+        "Flores": "Flores, Franco",
+        "Franco, Leandro": "Franco, Leandro",
+        "Melisa Coniglio": "Coniglio, Melisa",
+        "Lucas Welch": "Welch, Lucas",
+        "Elizabeth Espinosa": "Espinosa, Elizabeth",
+        "Nicolas Vander": "Vander, Nicolas",
+        "Eric Vivas": "Vivas, Eric"
     }
 
     # 3. New LPP data (Year 2026)

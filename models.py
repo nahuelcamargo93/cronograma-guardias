@@ -36,6 +36,7 @@ class Empleado:
     feriados_previos: int = 0
     horas_fijas_semanales: int = 0
     seguimientos_previos: int = 0
+    noches_previas: int = 0
     
     # Días (índices 0..DIAS_DEL_BLOQUE) en los que está de licencia (LPP/LAR)
     dias_licencia: Set[int] = field(default_factory=set)

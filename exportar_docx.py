@@ -226,10 +226,8 @@ def main():
     semanas = construir_semanas(fecha_inicio, fecha_fin)
     
     # Nombre del archivo final
-    fecha_dt = datetime.datetime.strptime(fecha_inicio, "%Y-%m-%d")
-    mes_str = MESES[fecha_dt.month].capitalize()
-    anio = fecha_dt.year
-    output_filename = f"Cronograma_Medicos_{mes_str}_{anio}.docx"
+    from utils import obtener_nombre_archivo
+    output_filename = obtener_nombre_archivo("Cronograma_Medicos", fecha_inicio, "docx")
     
     print(f"Generando Word (.docx): {output_filename}...")
     try:

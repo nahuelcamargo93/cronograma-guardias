@@ -40,6 +40,32 @@ def resolver_parametros_regla(
         Raises KeyError si la regla no existe en ningún nivel de la jerarquía
                (para que el llamador decida si es un error o simplemente no aplica).
     """
+    # ─── 0. DETECTAR SOLO_ASIGNACIONES_FIJAS ──────────────────────────────────
+    # Si el profesional solo hace asignaciones fijas, desactivamos automáticamente
+    # cualquier otra regla para evitar colisiones matemáticas (ellos deciden).
+    if codigo_regla not in ('SOLO_ASIGNACIONES_FIJAS', 'ASIGNACION_FIJA'):
+        saf_activo = False
+        # A. Comprobar ajuste temporal
+        if ajustes_personal and nombre in ajustes_personal:
+            for aj in ajustes_personal[nombre]:
+                if aj['codigo_regla'] == 'SOLO_ASIGNACIONES_FIJAS' and aj['fecha_inicio'] <= fecha_str <= aj['fecha_fin']:
+                    if aj['accion'] == 'SOBRESCRIBIR':
+                        saf_activo = True
+                    elif aj['accion'] == 'SUSPENDER':
+                        saf_activo = False
+                    break
+            else:
+                # B. Si no hay ajuste, ver si tiene la regla fija cargada
+                if reglas_personal and 'SOLO_ASIGNACIONES_FIJAS' in reglas_personal:
+                    saf_activo = True
+        else:
+            # B. Si no hay ajustes de ningún tipo, ver la regla fija
+            if reglas_personal and 'SOLO_ASIGNACIONES_FIJAS' in reglas_personal:
+                saf_activo = True
+                
+        if saf_activo:
+            return None # Regla suspendida automáticamente
+
     # ─── 1. AJUSTE TEMPORAL PERSONAL ──────────────────────────────────────────
     # Tiene prioridad absoluta. Si hay un ajuste activo para esta persona y fecha,
     # se aplica sin importar lo que digan las reglas base.
@@ -93,10 +119,11 @@ def regla_existe(params):
 
 
 def regla_suspendida(params):
-    """True si la regla está suspendida (ya sea por ajuste temporal o por parámetro en el JSON)."""
-    if params is None:
+    """True si la regla está suspendida (ya sea por ajuste temporal o por parámetro en el JSON) o no existe."""
+    if params is None or params is ...:
         return True
     if isinstance(params, dict) and params.get('suspendida') is True:
         return True
     return False
+
 

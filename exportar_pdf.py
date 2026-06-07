@@ -25,45 +25,34 @@ MESES = {
 }
 
 MAPEO_NOMBRES = {
-    "Aguilera Graciela": "Aguilera",
-    "Arias Guillermina": "Arias",
-    "Baracat Denisse": "Baracat",
-    "Barloa Matas Damin": "Barloa",
-    "Barloa Matías Damián": "Barloa",
-    "Diaz Villafae Morales Abigail": "Diaz",
-    "Diaz Villafañe Morales Abigail": "Diaz",
-    "Garcia Rodriguez, Maria Eugenia.": "Garcia R.",
-    "Godoy Maria": "Godoy",
-    "Kolarik Jorge Luis": "Kolarik",
-    "Silva, Martn Enrique": "Silva",
+    "Aguilera, Graciela": "Aguilera",
+    "Arias, Guillermina": "Arias",
+    "Baracat, Denisse": "Baracat",
+    "Barloa, Matías Damián": "Barloa",
+    "Diaz Villafañe Morales, Abigail": "Diaz",
+    "Garcia Rodriguez, Maria Eugenia": "Garcia R.",
+    "Godoy, Maria": "Godoy",
+    "Kolarik, Jorge Luis": "Kolarik",
     "Silva, Martín Enrique": "Silva",
     "Mora, Sergio Enrique": "Mora",
     "Motta, Mayra Belen": "Motta",
     "Moya, Pedro": "Moya",
     "Murillo, Santiago": "Murillo",
-    "Navarro Suarez Gabriela Beln": "Suarez",
-    "Navarro Suarez Gabriela Belén": "Suarez",
-    "Nesteruk Mara Silvia": "Nesteruk",
-    "Nesteruk María Silvia": "Nesteruk",
-    "Noriega Claudio Martn": "Noriega",
-    "Noriega Claudio Martín": "Noriega",
-    "Pregot Analia Mariana": "Pregot",
-    "Quintero Anabela Belen": "Quintero",
-    "Quiroga Sassu Maria Macarena": "Quiroga",
-    "Snchez Reinoso Ana Beln": "Sánchez",
-    "Sánchez Reinoso Ana Belén": "Sánchez",
-    "Zeballos Valeria Alejandra": "Zeballos",
-    "Arce Carolina": "Arce",
-    "Pacheco Celeste": "Pacheco",
-    "Biscarra Joaqun Martin": "Biscarra",
-    "Biscarra Joaquín Martin": "Biscarra",
-    "Villegas Oliva Maria Beln": "Villegas",
-    "Villegas Oliva Maria Belén": "Villegas",
-    "Matricadi Wendy Ailen": "Matricadi",
-    "Nez Florencia Natalia": "Núñez",
-    "Núñez Florencia Natalia": "Núñez",
-    "Palermo Agustn": "Palermo",
-    "Palermo Agustín": "Palermo"
+    "Navarro Suarez, Gabriela Belén": "Suarez",
+    "Nesteruk, María Silvia": "Nesteruk",
+    "Noriega, Claudio Martín": "Noriega",
+    "Pregot, Analia Mariana": "Pregot",
+    "Quintero, Anabela Belen": "Quintero",
+    "Quiroga Sassu, Maria Macarena": "Quiroga",
+    "Sánchez Reinoso, Ana Belén": "Sánchez",
+    "Zeballos, Valeria Alejandra": "Zeballos",
+    "Arce, Carolina": "Arce",
+    "Pacheco, Celeste": "Pacheco",
+    "Biscarra, Joaquín Martin": "Biscarra",
+    "Villegas Oliva, Maria Belén": "Villegas",
+    "Matricadi, Wendy Ailen": "Matricadi",
+    "Núñez, Florencia Natalia": "Núñez",
+    "Palermo, Agustín": "Palermo"
 }
 
 def simplificar_nombre(nombre):
@@ -650,15 +639,13 @@ def main():
     
     # Cargar licencias e inicializar dicts de queries para el reporte
     from database import queries as db_queries
-    db_queries.init_licencias()
+    db_queries.init_licencias(3)
     
     df_resultados, df_personal, flrs_asignados = obtener_estructuras_reporte(crono_id, fecha_inicio, fecha_fin)
     
     # Nombre del archivo final
-    fecha_dt = datetime.datetime.strptime(fecha_inicio, "%Y-%m-%d")
-    mes_str = MESES[fecha_dt.month].capitalize()
-    anio = fecha_dt.year
-    output_filename = f"Cronograma_Medicos_{mes_str}_{anio}.pdf"
+    from utils import obtener_nombre_archivo
+    output_filename = obtener_nombre_archivo("Cronograma_Medicos", fecha_inicio, "pdf")
     
     print(f"Generando PDF: {output_filename}...")
     try:

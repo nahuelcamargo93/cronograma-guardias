@@ -281,6 +281,26 @@ def inicializar_db():
             CREATE INDEX IF NOT EXISTS idx_turnos_ajustes_fecha ON turnos_ajustes(fecha_inicio);
             CREATE INDEX IF NOT EXISTS idx_pra_nombre_regla ON personal_reglas_ajustes(personal_nombre, codigo_regla);
             CREATE INDEX IF NOT EXISTS idx_sra_servicio_regla ON servicios_reglas_ajustes(servicio_id, codigo_regla);
+
+            CREATE TABLE IF NOT EXISTS infracciones_debug (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cronograma_id INTEGER NOT NULL REFERENCES cronogramas(id) ON DELETE CASCADE,
+                codigo_regla TEXT NOT NULL,
+                detalle TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_infracciones_crono ON infracciones_debug(cronograma_id);
+
+            CREATE TABLE IF NOT EXISTS feriados (
+                fecha TEXT PRIMARY KEY,
+                descripcion TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS feriados_exclusiones (
+                fecha TEXT NOT NULL REFERENCES feriados(fecha) ON DELETE CASCADE,
+                servicio_id INTEGER NOT NULL REFERENCES servicios(id) ON DELETE CASCADE,
+                PRIMARY KEY (fecha, servicio_id)
+            );
         """)
         
         # Migraciones seguras para tablas existentes
@@ -389,6 +409,72 @@ def inicializar_db():
 
         # personal_reglas_ajustes ya se crea via CREATE TABLE IF NOT EXISTS en executescript
 
+        # --- TAREA 1.1: Añadir servicio_id a tablas clave para filtrado directo en DB Browser ---
+
+        # 1. personal_reglas.servicio_id
+        try:
+            conn.execute("ALTER TABLE personal_reglas ADD COLUMN servicio_id INTEGER REFERENCES servicios(id)")
+        except sqlite3.OperationalError: pass
+        try:
+            conn.execute("""
+                UPDATE personal_reglas
+                SET servicio_id = COALESCE(
+                    (SELECT p.servicio_id FROM personal p WHERE p.nombre = personal_reglas.personal_nombre),
+                    1
+                )
+                WHERE servicio_id IS NULL
+            """)
+        except Exception as e:
+            print(f"[schema] Error migración servicio_id en personal_reglas: {e}")
+
+        # 2. personal_reglas_ajustes.servicio_id
+        try:
+            conn.execute("ALTER TABLE personal_reglas_ajustes ADD COLUMN servicio_id INTEGER REFERENCES servicios(id)")
+        except sqlite3.OperationalError: pass
+        try:
+            conn.execute("""
+                UPDATE personal_reglas_ajustes
+                SET servicio_id = COALESCE(
+                    (SELECT p.servicio_id FROM personal p WHERE p.nombre = personal_reglas_ajustes.personal_nombre),
+                    1
+                )
+                WHERE servicio_id IS NULL
+            """)
+        except Exception as e:
+            print(f"[schema] Error migración servicio_id en personal_reglas_ajustes: {e}")
+
+        # 3. personal_puestos.servicio_id
+        try:
+            conn.execute("ALTER TABLE personal_puestos ADD COLUMN servicio_id INTEGER REFERENCES servicios(id)")
+        except sqlite3.OperationalError: pass
+        try:
+            conn.execute("""
+                UPDATE personal_puestos
+                SET servicio_id = COALESCE(
+                    (SELECT p.servicio_id FROM personal p WHERE p.nombre = personal_puestos.personal_nombre),
+                    1
+                )
+                WHERE servicio_id IS NULL
+            """)
+        except Exception as e:
+            print(f"[schema] Error migración servicio_id en personal_puestos: {e}")
+
+        # 4. guardias.servicio_id
+        try:
+            conn.execute("ALTER TABLE guardias ADD COLUMN servicio_id INTEGER REFERENCES servicios(id)")
+        except sqlite3.OperationalError: pass
+        try:
+            conn.execute("""
+                UPDATE guardias
+                SET servicio_id = COALESCE(
+                    (SELECT p.servicio_id FROM personal p WHERE p.nombre = guardias.nombre),
+                    1
+                )
+                WHERE servicio_id IS NULL
+            """)
+        except Exception as e:
+            print(f"[schema] Error migración servicio_id en guardias: {e}")
+
         # Asegurar datos iniciales HCRC -> Kinesiología Crítica
         conn.execute("INSERT OR IGNORE INTO organizaciones (id, nombre) VALUES (1, 'HCRC')")
         conn.execute("INSERT OR IGNORE INTO servicios (id, organizacion_id, nombre) VALUES (1, 1, 'Kinesiologia Critica')")
@@ -439,6 +525,42 @@ def inicializar_db():
         except Exception as e:
             print(f"Error en migración automática de personal_puestos: {e}")
 
+        # Asegurar feriados por defecto
+        try:
+            default_feriados = [
+                ("2026-05-25", "Revolución de Mayo"),
+                ("2026-06-15", "Paso a la Inmortalidad del Gral. Güemes"),
+                ("2026-06-20", "Paso a la Inmortalidad del Gral. Belgrano"),
+                ("2026-07-09", "Día de la Independencia")
+            ]
+            for f_fecha, f_desc in default_feriados:
+                conn.execute("INSERT OR IGNORE INTO feriados (fecha, descripcion) VALUES (?, ?)", (f_fecha, f_desc))
+        except Exception as e:
+            print(f"Error al inicializar feriados: {e}")
+
+        # Asegurar catálogo de reglas completo
+        try:
+            inicializar_catalogo_reglas(conn)
+        except Exception as e:
+            print(f"Error al inicializar catálogo de reglas: {e}")
+
+        # Asegurar regla FINDE_POST_LICENCIA configurada para servicio_id = 2 como "completo"
+        try:
+            conn.execute("""
+                INSERT OR IGNORE INTO servicios_reglas (servicio_id, codigo_regla, parametros_json, activo)
+                VALUES (2, 'FINDE_POST_LICENCIA', '{"configuracion": "completo"}', 1)
+            """)
+            conn.execute("""
+                UPDATE servicios_reglas 
+                SET parametros_json = '{"configuracion": "completo"}', activo = 1
+                WHERE servicio_id = 2 AND codigo_regla = 'FINDE_POST_LICENCIA'
+            """)
+        except Exception as e:
+            print(f"Error al inicializar regla FINDE_POST_LICENCIA en servicio 2: {e}")
+
+
+
+
 def inicializar_datos_wfm():
     """Puebla las tablas de la nueva arquitectura WFM con los datos base provistos por el usuario."""
     with get_connection() as conn:
@@ -484,6 +606,7 @@ def inicializar_datos_wfm():
             
             ('Dia_UTI', '08:00', 12, '0,1,2,3,4,5,6', p_uti, 4),
             ('Dia_UCO', '08:00', 12, '0,1,2,3,4,5,6', p_uco, 5),
+            ('Dia_especial', '08:00', 12, '0,1,2,3,4,5,6', p_esp, 10),
             
             ('Tarde_UTI', '14:00', 6, '0,1,2,3,4', p_uti, 6),
             ('Tarde_UCO', '14:00', 6, '0,1,2,3,4', p_uco, 7),
@@ -537,7 +660,7 @@ def inicializar_datos_wfm():
                     VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                 """, (monit_serv_id, nom, hi, hs, d_sem, p_id, ordn))
 
-def inicializar_catalogo_reglas():
+def inicializar_catalogo_reglas(conn=None):
     """Puebla la tabla reglas_catalogo con las reglas base del sistema."""
     reglas_base = [
         ('MAX_HORAS_SEMANA', 'HARD', 'Límite máximo de horas por semana'),
@@ -563,7 +686,7 @@ def inicializar_catalogo_reglas():
         ('DIA_MADRE_PADRE_LIBRE', 'HARD', 'El profesional tiene franco obligatorio el día de la madre o del padre según corresponda'),
         ('PESO_BRECHA_MENSUAL_CALENDARIO', 'SOFT', 'Peso de penalización por diferencia de horas en el mes calendario'),
         ('PESO_EQUIDAD_FINDES_MENSUAL_CALENDARIO', 'SOFT', 'Peso de penalización por desigualdad de findes en mes calendario'),
-        ('LIMITES_SOFT_RULES', 'SOFT', 'Límites base para dimensionar el solver (Semanas_Base, Min_Horas, Max_Horas_Limite, etc)'),
+        ('LIMITES_SOFT_RULES', 'SOFT', 'Límite superior de horas mensuales para dimensionar variables del solver (MAX_HORAS_LIMITE_BASE)'),
         ('MAX_HORAS_MES_CALENDARIO', 'HARD', 'Límite máximo estricto de horas a trabajar por mes calendario. JSON: {"max_horas": 144}'),
         ('DESCANSO_ENTRE_TURNOS', 'HARD', 'Horas mínimas de descanso entre el fin de un turno y el comienzo del siguiente. JSON: {"horas": 12}'),
         ('PATRON_CICLICO', 'HARD', 'Patrón cíclico estricto de X días de trabajo seguidos de Y días de franco. JSON: {"trabajo": 10, "franco": 4}'),
@@ -574,13 +697,31 @@ def inicializar_catalogo_reglas():
         ('EXACTO_DIA_ESPECIFICO_MES', 'HARD', 'Asegura que el personal trabaje exactamente N veces un dia de la semana especifico en el mes. JSON: {"dia_semana": "Viernes", "exacto_dias": 1}'),
         ('EXACTO_FINDE_Y_DIA', 'HARD', 'Regla unificada para fines de semana y días específicos (ej. viernes) basada en la cantidad de fines de semana y días hábiles. JSON: {"dia_semana": "Viernes", "findes_por_disponibilidad": {"5": 2, "4": 2, "3": 2, "2": 1, "1": 1, "0": 0}, "dias_por_disponibilidad": {"5": 2, "4": 1, "3": 0, "2": 1, "1": 0, "0": 0}, "modo": "HARD", "peso_soft": 100000}'),
         ('FINDES_COMPLETOS_Y_MEDIOS', 'HARD', 'Asegura la cantidad exacta de fines de semana completos y medios trabajados según la disponibilidad. JSON: {"por_disponibilidad": {"4": {"completos": 2, "medios": 1}}}'),
-        ('PESO_EQUIDAD_FERIADOS', 'SOFT', 'Peso de penalización por desigualdad en feriados trabajados anuales')
+        ('MEZCLA_SEMANAL_DURA', 'HARD', 'Prohíbe mezclar familias de turno (M, T, TN, N) en una misma semana'),
+        ('PESO_EQUIDAD_FERIADOS', 'SOFT', 'Peso de penalización por desigualdad en feriados trabajados anuales'),
+        ('PESO_EQUIDAD_FSL', 'SOFT', 'Regla de equidad unificada para fines de semana largos (FSL3 y FSL4) con nivelación histórica'),
+        ('PESO_BRECHA_TURNO', 'SOFT', 'Peso de penalización para nivelar noches (turnos Noche) con soporte de nivelación histórica'),
+        ('SEMANAS_SEGUIMIENTO_REQUERIDAS', 'HARD', 'Mínimo de semanas de seguimiento de mañana, tarde y total requeridas en el mes. JSON: {"min_manana": 1, "min_tarde": 2, "min_total": 3}'),
+        ('NO_REPETIR_TURNO_CONSECUTIVO', 'HARD', 'Prohíbe repetir el mismo tipo de turno semanal en semanas consecutivas'),
+        ('ORDEN_ROTACION_SEMANAL', 'HARD', 'Restricción de orden ideal de rotación de turnos semanal (T -> M -> N -> TN)'),
+        ('MAX_FRANCOS_SEMANA', 'HARD', 'Límite máximo de francos por semana calendario'),
+        ('PUESTOS_SOLO_FIJOS', 'HARD', 'Puestos específicos donde las asignaciones son exclusivas a través de ASIGNACION_FIJA. JSON: {"puestos": ["Especial"]}'),
+        ('SOLO_ASIGNACIONES_FIJAS', 'HARD', 'El profesional solo realiza guardias asignadas mediante ASIGNACION_FIJA y no se le asignan turnos libres.'),
+        ('FINDE_POST_LICENCIA', 'HARD', 'El primer fin de semana después de volver de una licencia debe trabajarse. JSON: {"configuracion": "completo"}'),
+        ('MAX_FRANCOS_CONTINUOS', 'HARD', 'Límite máximo de francos seguidos (consecutivos) permitidos. JSON: {"max_francos": 3, "modo": "HARD", "peso_soft": 10000}')
     ]
-    with get_connection() as conn:
+    if conn is not None:
         for codigo, tipo, desc in reglas_base:
             conn.execute("""
                 INSERT OR IGNORE INTO reglas_catalogo (codigo_regla, tipo, descripcion)
                 VALUES (?, ?, ?)
             """, (codigo, tipo, desc))
+    else:
+        with get_connection() as conn_new:
+            for codigo, tipo, desc in reglas_base:
+                conn_new.execute("""
+                    INSERT OR IGNORE INTO reglas_catalogo (codigo_regla, tipo, descripcion)
+                    VALUES (?, ?, ?)
+                """, (codigo, tipo, desc))
 
 
