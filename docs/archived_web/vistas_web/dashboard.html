@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WFM Dashboard | Cronograma Inteligente</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon"></div>
+                    <span>WFM Dashboard</span>
+                </div>
+                <button class="btn-toggle-sidebar" onclick="toggleSidebar()" title="Colapsar menú">
+                    <i data-feather="chevron-left" id="toggle-icon"></i>
+                </button>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-section">Principal</div>
+                <button class="nav-item active" onclick="showSection('overview')">
+                    <i data-feather="grid"></i>
+                    <span>Vista General</span>
+                </button>
+                <button class="nav-item" onclick="showSection('calendar')">
+                    <i data-feather="calendar"></i>
+                    <span>Calendario</span>
+                </button>
+                <button class="nav-item" onclick="showSection('rules')">
+                    <i data-feather="shield"></i>
+                    <span>Reglas y Ajustes</span>
+                </button>
+                <button class="nav-item" onclick="showSection('staff')">
+                    <i data-feather="users"></i>
+                    <span>Personal</span>
+                </button>
+                
+                <div class="nav-section">Configuración</div>
+                <div class="selector-container">
+                    <label>Organización</label>
+                    <select id="select-org" onchange="loadServices()">
+                        <option value="">Seleccionar...</option>
+                    </select>
+                </div>
+                <div class="selector-container">
+                    <label>Servicio</label>
+                    <select id="select-service" onchange="onServiceChange()">
+                        <option value="">Seleccionar...</option>
+                    </select>
+                </div>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <button class="btn-generate" onclick="openGenerateModal()">
+                    <i data-feather="play"></i>
+                    <span>Generar Nuevo</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="page-info">
+                    <h1 id="page-title">Vista General</h1>
+                    <p id="page-subtitle">Selecciona un servicio para comenzar</p>
+                </div>
+                <div class="user-profile">
+                    <div class="status-indicator online"></div>
+                    <span>Administrador</span>
+                </div>
+            </header>
+
+            <div class="content-area">
+                <!-- Overview Section -->
+                <section id="section-overview" class="section active">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon"><i data-feather="clock"></i></div>
+                            <div class="stat-info">
+                                <span class="stat-label">Horas Totales</span>
+                                <h3 id="stat-hours">-</h3>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon"><i data-feather="user-check"></i></div>
+                            <div class="stat-info">
+                                <span class="stat-label">Personal Activo</span>
+                                <h3 id="stat-staff">-</h3>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon"><i data-feather="alert-circle"></i></div>
+                            <div class="stat-info">
+                                <span class="stat-label">Inconsistencias</span>
+                                <h3 id="stat-alerts">0</h3>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="main-card mt-24">
+                        <div class="card-header">
+                            <h2>Historial de Cronogramas</h2>
+                            <div class="card-actions">
+                                <button class="btn-icon"><i data-feather="download"></i></button>
+                            </div>
+                        </div>
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                               <thead>
+                                   <tr>
+                                       <th>ID</th>
+                                       <th>Periodo</th>
+                                       <th>Estado</th>
+                                       <th>Creado</th>
+                                       <th>Notas</th>
+                                       <th>Acciones</th>
+                                   </tr>
+                               </thead>
+                               <tbody id="cronogramas-list">
+                                   <tr><td colspan="6" class="empty-state">No hay datos disponibles</td></tr>
+                               </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Rules Section -->
+                <section id="section-rules" class="section">
+                    <div class="rules-container">
+                        <div class="rules-tabs">
+                            <button class="rule-tab active" data-type="general" onclick="showRuleSub('general')">Reglas Generales</button>
+                            <button class="rule-tab" data-type="personal" onclick="showRuleSub('personal')">Ajustes Personal</button>
+                            <button class="rule-tab" data-type="turnos" onclick="showRuleSub('turnos')">Turnos</button>
+                            <button class="rule-tab" data-type="demanda" onclick="showRuleSub('demanda')">Demanda</button>
+                        </div>
+                        <div class="rules-content" id="rules-content-view">
+                            <!-- Inyectado por JS -->
+                        </div>
+                    </div>
+                </section>
+                
+                <!-- Calendar/Grid Section -->
+                <section id="section-calendar" class="section">
+                    <div class="calendar-controls">
+                        <div class="cal-top-row">
+                            <div class="cal-selector-group" style="display: none;">
+                                <label class="cal-label">Cronograma</label>
+                                <select id="select-cronograma" onchange="onCronogramaChange()">
+                                    <option value="">Seleccionar cronograma...</option>
+                                </select>
+                            </div>
+                            <div class="cal-tabs-group">
+                                <button class="cal-tab active" data-view="cronograma" onclick="showCalendarView('cronograma')">Vista Cronograma</button>
+                                <button class="cal-tab" data-view="personal" onclick="showCalendarView('personal')">Vista Personal</button>
+                            </div>
+                        </div>
+                        <div class="week-nav-bar">
+                            <button class="btn-week-nav" onclick="prevWeek()" id="btn-prev-week">
+                                <i data-feather="chevron-left"></i>
+                            </button>
+                            <div class="week-label-group">
+                                <span id="week-label">Selecciona un cronograma</span>
+                                <input type="date" id="week-picker" onchange="goToDate(this.value)">
+                            </div>
+                            <button class="btn-week-nav" onclick="nextWeek()" id="btn-next-week">
+                                <i data-feather="chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="calendar-content-view" class="mt-16">
+                        <div class="empty-state">Selecciona un servicio y un cronograma para ver el calendario</div>
+                    </div>
+                </section>
+
+                <!-- Staff Section -->
+                <section id="section-staff" class="section">
+                    <div style="padding: 0 0 16px 0;">
+                        <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 4px;">Gestión de Personal</h3>
+                        <p style="font-size: 0.85rem; color: var(--text-muted);">Listado completo del personal asignado al servicio seleccionado.</p>
+                    </div>
+                    <div class="main-card">
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                               <thead>
+                                   <tr>
+                                       <th>Nombre</th>
+                                       <th>Categoría</th>
+                                       <th>Rol</th>
+                                       <th>Régimen de Trabajo</th>
+                                       <th>Fecha Cumpleaños</th>
+                                       <th>Madre/Padre</th>
+                                       <th>Horas Reglamentarias</th>
+                                   </tr>
+                               </thead>
+                               <tbody id="staff-list">
+                                   <tr><td colspan="7" class="empty-state">Selecciona un servicio para ver el personal</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="modal-generate" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Generar Cronograma</h2>
+                <button class="close-modal" onclick="closeModal('modal-generate')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Fecha Inicio</label>
+                    <input type="date" id="gen-start">
+                </div>
+                <div class="form-group">
+                    <label>Fecha Fin</label>
+                    <input type="date" id="gen-end">
+                </div>
+                <div class="alert info">
+                    <i data-feather="info"></i>
+                    <span>El periodo debe ser múltiplo de 7 días para resultados óptimos.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeModal('modal-generate')">Cancelar</button>
+                <button class="btn-primary" onclick="startGeneration()">Iniciar Proceso</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Detalle de Regla -->
+    <div id="modal-rule-detail" class="modal">
+        <div class="modal-content" style="width: 700px; max-width: 90vw;">
+            <div class="modal-header">
+                <h2 id="rule-detail-title">Detalle de Regla</h2>
+                <button class="close-modal" onclick="closeModal('modal-rule-detail')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre id="rule-detail-json" class="rule-json" style="max-height: 400px; overflow-y: auto;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary" onclick="closeModal('modal-rule-detail')">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/main.js"></script>
+    <script>
+        feather.replace();
+    </script>
+</body>
+</html>

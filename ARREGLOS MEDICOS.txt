@@ -1,0 +1,26 @@
+ultimamente estuvimos trabjando en optimizar las reglas del servicio id 3. 
+
+En teoria lo habias arreglado peor ahora veo que no funcioan del todo bien.
+
+
+Lo que estoy tratando de optimziar es la regla  EXACTO_FINDE_Y_DIA 
+
+Lo que quieor es setear la cantidad de fines de semana y dias que tiene que trabajar el personal, pero hay otras reglas que vana  "interactuar" con esta. Osea que el funcionamiento de esta regla tiene que contemplar que apsa cuando se activan otras reglas especificas.
+
+
+- SOLO_ASIGNACIONES_FIJAS: esta regla apaga por completo la regla EXACTO_FINDE_Y_DIA ya que el solver pierde completamente la capacidad de asignacion de guardias. 
+
+- FRANCO_FORZADO: cuando hay un franco forzado, el mismo no debe descontar disponibilidad. Por ejemplo alguien tiene un fin de semana forzado, no disminuye la disponibildiad de Fs del mes sino que ya suma como un FS libre asignado, por lo cual debe seguir completando los demas con la logica configurada
+
+- ASIGNACION_FIJA: de igual forma asignacion fija, si se asiga un fin de semana, ya cuenta como un FS asignado, o un viernes lo que sea. Por lo cual el modelo ya lo tiene que contar como asignado y seguri repetando la logica confiurada en la regla EXACTO_FINDE_Y_DIA
+
+- Ahora si por ejemplo via ASIGNACION_FIJA se asigna MAS de lo que el modelo debe asignarle NO debe dar error matematico por ams de que EXACTO_FINDE_Y_DIA este en modo HARD. Ya que intencionalmente se hizo asi, Por ejemplo si se debe asginar trabajar 1 fidne y 1 viernes. y se asignan 2 fs de forma fija, debe seguir completando la logic ay asignar un viernes.
+Lo mismo con FRANCO_FORZADO, si se asignan por ejemplo libre todos los fines de semana, no se debe romper la regla. 
+
+- Solo deben descotnar "disponibiliad" de Fs las licencias.
+
+
+
+Cree el cronogrmaa 446 
+
+Investiga si esto esta funcionando efectivamente asi y sino hagamos un plan de implementacion para solucioanrlo

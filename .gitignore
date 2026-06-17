@@ -5,6 +5,7 @@ __pycache__/
 venv/
 ENV/
 *.db
+!cronograma_inteligente.db
 *.xlsx
 *.csv
 .DS_Store

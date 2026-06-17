@@ -623,6 +623,7 @@ def inicializar_catalogo_reglas():
         ('MAX_TURNOS', 'HARD', 'Limite maximo de un grupo de turnos por semana o mes. JSON: [{"turnos": ["Dia_UTI", "Noche"], "max_por_mes": 1}]'),
         ('PESO_BRECHA_ANUAL', 'SOFT', 'Peso de penalización por diferencia de horas anuales'),
         ('PESO_BRECHA_MENSUAL', 'SOFT', 'Peso de penalización por diferencia de horas en el mes'),
+        ('PESO_BRECHA_HORAS', 'SOFT', 'Peso de penalización por brecha incremental de horas asignadas en base a disponibilidad'),
         ('PESO_BRECHA_SEG', 'SOFT', 'Peso de penalización por diferencia de seguimientos'),
         ('PESO_EQUIDAD_FL3', 'SOFT', 'Peso de penalización por desigualdad en findes largos de 3 días'),
         ('PESO_EQUIDAD_FL4', 'SOFT', 'Peso de penalización por desigualdad en findes largos de 4 días'),

@@ -366,6 +366,24 @@ def inicializar_db():
             conn.execute("ALTER TABLE licencias ADD COLUMN metadata TEXT")
         except sqlite3.OperationalError: pass
 
+        try:
+            conn.execute("ALTER TABLE licencias ADD COLUMN activa INTEGER DEFAULT 1")
+        except sqlite3.OperationalError: pass
+
+        try:
+            conn.execute("ALTER TABLE licencias ADD COLUMN servicio_id INTEGER REFERENCES servicios(id)")
+        except sqlite3.OperationalError: pass
+        try:
+            conn.execute("""
+                UPDATE licencias
+                SET servicio_id = (
+                    SELECT p.servicio_id FROM personal p WHERE p.nombre = licencias.nombre
+                )
+                WHERE servicio_id IS NULL
+            """)
+        except Exception as e:
+            print(f"[schema] Error migración servicio_id en licencias: {e}")
+
         # Agregar columna activo a las tablas que no lo tenian
         tablas_a_migrar_activo = [
             "organizaciones_reglas", "servicios_reglas", "personal_reglas",
@@ -558,6 +576,39 @@ def inicializar_db():
         except Exception as e:
             print(f"Error al inicializar regla FINDE_POST_LICENCIA en servicio 2: {e}")
 
+        # Asegurar regla FRANCOS_FIN_MES configurada para servicio_id = 3 y personal Polleti Natalia
+        try:
+            conn.execute("""
+                INSERT OR IGNORE INTO servicios_reglas (servicio_id, codigo_regla, parametros_json, activo)
+                VALUES (3, 'FRANCOS_FIN_MES', '{"por_dias": {"5": 2, "4": 1}, "peso": 5000}', 1)
+            """)
+            conn.execute("""
+                UPDATE servicios_reglas 
+                SET parametros_json = '{"por_dias": {"5": 2, "4": 1}, "peso": 5000}', activo = 1
+                WHERE servicio_id = 3 AND codigo_regla = 'FRANCOS_FIN_MES'
+            """)
+            
+            # Verificar si existe POLETTI NATALIA en la BD antes de insertar la regla personal
+            # El usuario la mencionó como "Polleti Natalia", en la BD figura como "POLETTI NATALIA"
+            res_p = conn.execute("SELECT nombre FROM personal WHERE nombre = 'POLETTI NATALIA'").fetchone()
+            if not res_p:
+                # Fallback por si acaso
+                res_p = conn.execute("SELECT nombre FROM personal WHERE nombre LIKE '%POLETTI NATALIA%'").fetchone()
+            
+            if res_p:
+                nombre_exacto = res_p[0]
+                conn.execute("""
+                    INSERT OR IGNORE INTO personal_reglas (personal_nombre, codigo_regla, parametros_json, activo, servicio_id)
+                    VALUES (?, 'FRANCOS_FIN_MES', '{"por_dias": {"5": 3, "4": 2}, "peso": 5000}', 1, 3)
+                """, (nombre_exacto,))
+                conn.execute("""
+                    UPDATE personal_reglas 
+                    SET parametros_json = '{"por_dias": {"5": 3, "4": 2}, "peso": 5000}', activo = 1
+                    WHERE personal_nombre = ? AND codigo_regla = 'FRANCOS_FIN_MES'
+                """, (nombre_exacto,))
+        except Exception as e:
+            print(f"Error al inicializar regla FRANCOS_FIN_MES para servicio 3 / Natalia Polleti: {e}")
+
 
 
 
@@ -672,6 +723,7 @@ def inicializar_catalogo_reglas(conn=None):
         ('MAX_TURNOS', 'HARD', 'Limite maximo de un tipo de turno especifico por bloque semanal. JSON: [{"turno": "Noche", "max_por_semana": 2}]'),
         ('PESO_BRECHA_ANUAL', 'SOFT', 'Peso de penalización por diferencia de horas anuales'),
         ('PESO_BRECHA_MENSUAL', 'SOFT', 'Peso de penalización por diferencia de horas en el mes'),
+        ('PESO_BRECHA_HORAS', 'SOFT', 'Peso de penalización por brecha incremental de horas asignadas en base a disponibilidad'),
         ('PESO_BRECHA_SEG', 'SOFT', 'Peso de penalización por diferencia de seguimientos'),
         ('PESO_EQUIDAD_FL3', 'SOFT', 'Peso de penalización por desigualdad en findes largos de 3 días'),
         ('PESO_EQUIDAD_FL4', 'SOFT', 'Peso de penalización por desigualdad en findes largos de 4 días'),
@@ -708,7 +760,11 @@ def inicializar_catalogo_reglas(conn=None):
         ('PUESTOS_SOLO_FIJOS', 'HARD', 'Puestos específicos donde las asignaciones son exclusivas a través de ASIGNACION_FIJA. JSON: {"puestos": ["Especial"]}'),
         ('SOLO_ASIGNACIONES_FIJAS', 'HARD', 'El profesional solo realiza guardias asignadas mediante ASIGNACION_FIJA y no se le asignan turnos libres.'),
         ('FINDE_POST_LICENCIA', 'HARD', 'El primer fin de semana después de volver de una licencia debe trabajarse. JSON: {"configuracion": "completo"}'),
-        ('MAX_FRANCOS_CONTINUOS', 'HARD', 'Límite máximo de francos seguidos (consecutivos) permitidos. JSON: {"max_francos": 3, "modo": "HARD", "peso_soft": 10000}')
+        ('MAX_FRANCOS_CONTINUOS', 'HARD', 'Límite máximo de francos seguidos (consecutivos) permitidos. JSON: {"max_francos": 3, "modo": "HARD", "peso_soft": 10000}'),
+        ('MIN_HORAS_SEMANA', 'HARD', 'Piso mínimo de horas trabajadas por semana calendario'),
+        ('FRANCOS_FIN_MES', 'SOFT', 'Asegura la cantidad de francos en la última semana del mes si esta es incompleta (tiene 4 o 5 días).'),
+        ('MIN_TURNOS_SEMANA', 'HARD', 'Piso mínimo de turnos trabajados por semana calendario'),
+        ('MIN_FRANCOS_SEMANA', 'HARD', 'Piso mínimo de francos por semana calendario')
     ]
     if conn is not None:
         for codigo, tipo, desc in reglas_base:

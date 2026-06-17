@@ -1,0 +1,10 @@
+El análisis del conflicto de inviabilidad matemática para el Servicio ID 4 en Julio 2026 arrojó dos causas principales:
+
+Límite individual de 6 horas: Cinco monitoristas nocturnos (ESCUDERO Gabriela, FERNANDEZ Celeste Ivana, FERNANDEZ Juan Emir, FLORES Enzo y KOPRIVSEK Francisco) tienen la regla individual MAX_HORAS_MES_CALENDARIO = 6 activa de forma dura. Dado que son los únicos habilitados para el turno 00-06_Monitorista, imposibilita cubrir la noche en el mes.
+Déficit por rigidez de turnos (EXCLUIR_TURNOS): Los monitoristas tienen asignado un único turno fijo. Debido a esto, la capacidad máxima mensual (120 horas / 20 turnos) del personal asignado a la Tarde (6 personas), Noche 2 (6 personas) y Noche 1 (5 personas) es insuficiente para cubrir la demanda mínima de 4 personas por turno en un mes de 31 días. Se requieren promedios de hasta 24.8 turnos por persona en la Noche 1.
+Solución Propuesta (Comprobada y Viable)
+Ajuste 1: Eliminar/desactivar la regla individual de 6 horas para los 5 monitoristas nocturnos.
+Ajuste 2: Crear un ajuste temporal de servicio para Julio 2026 incrementando la regla MAX_HORAS_MES_CALENDARIO general a 144 horas (24 turnos) para dar margen de cobertura a los turnos deficitarios.
+(Simulado con éxito: generó el cronograma ID 468 sin infracciones de cobertura).
+
+¿Confirmás la aplicación de estos cambios en la base de datos para Julio de 2026?

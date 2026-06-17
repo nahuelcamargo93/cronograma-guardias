@@ -13,12 +13,37 @@ import rule_engine as _re
 # CONFIGURACIÓN POR DEFECTO PARA EJECUCIÓN DIRECTA (CLI)
 # Modifica estas variables para no tener que tipearlas por consola
 # ==============================================================================
-DEFAULT_SERVICIO_ID = 2
+"""DEFAULT_SERVICIO_ID = 2
 DEFAULT_FECHA_INICIO = "2026-07-01"
-DEFAULT_MAX_TIME_IN_SECONDS = 1800
-# ==============================================================================
+DEFAULT_FECHA_FIN = None
+DEFAULT_MAX_TIME_IN_SECONDS = 1200
+DEFAULT_CRONOGRAMA_BASE_ID = None
+DEFAULT_LOCK_FECHA_INICIO = None
+DEFAULT_LOCK_FECHA_FIN = None
+DEFAULT_DEBUG_SOFT = False
+DEFAULT_DEBUG_HARD = False
+DEFAULT_DIAGNOSE = False
+"""# ==============================================================================
 
-def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, feriados, offset_dia, num_semanas, reglas_servicio, ajustes_reglas_personal=None, historial_semana_previa=None, servicio_id=1, fecha_inicio=None, fecha_fin=None, modo_debug=False, force_assumptions=False):
+# =====
+#Para medicos julio
+DEFAULT_SERVICIO_ID = 3
+DEFAULT_FECHA_INICIO = "2026-07-01"
+DEFAULT_FECHA_FIN = None
+DEFAULT_MAX_TIME_IN_SECONDS = 1200
+DEFAULT_CRONOGRAMA_BASE_ID = None
+DEFAULT_LOCK_FECHA_INICIO = None
+DEFAULT_LOCK_FECHA_FIN = None
+DEFAULT_DEBUG_SOFT = False
+DEFAULT_DEBUG_HARD = False
+DEFAULT_DIAGNOSE = False
+# ======
+
+
+def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, 
+feriados, offset_dia, num_semanas, reglas_servicio, ajustes_reglas_personal=None, historial_semana_previa=None, 
+servicio_id=1, fecha_inicio=None, fecha_fin=None, modo_debug=False, force_assumptions=False, cronograma_base_guardias=None, 
+modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=None):
     modelo = cp_model.CpModel()
     flr_tracker = {} # Para trackear variables booleanas de FLR y luego leerlas
 
@@ -118,9 +143,66 @@ def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajuste
         ajustes_reglas_personal=ajustes_reglas_personal,
         historial_semana_previa=historial_semana_previa,
         flr_tracker=flr_tracker,
-        modo_debug=modo_debug
+        modo_debug=modo_debug,
+        modo_debug_hard=modo_debug_hard,
+        exclusiones=exclusiones or set()
     )
     ctx.force_assumptions = force_assumptions
+
+    # 4. Inyección de Hints (Warm Start) si hay cronograma base
+    if (lock_fecha_inicio or lock_fecha_fin) and not cronograma_base_guardias:
+        print("⚠️ Advertencia: Se especificó rango de bloqueo de fechas, pero no se ha provisto un cronograma base.")
+        
+    if cronograma_base_guardias:
+        import datetime as dt_lib
+        print("[Warm Start] Mapeando e inyectando hints del cronograma base...")
+        fecha_inicio_dt_d = dt_lib.date.fromisoformat(fecha_inicio)
+        
+        # Mapear las guardias a índices de días (nombre, dia, turno)
+        guardias_base_indexadas = set()
+        for nombre_g, fecha_g, turno_g in cronograma_base_guardias:
+            try:
+                g_dt = dt_lib.date.fromisoformat(fecha_g)
+                dia_idx = (g_dt - fecha_inicio_dt_d).days
+                if 0 <= dia_idx < dias_del_bloque:
+                    guardias_base_indexadas.add((nombre_g, dia_idx, turno_g))
+            except Exception as e:
+                print(f"[Warm Start] Advertencia al mapear fecha {fecha_g}: {e}")
+        
+        lock_ini_dt = dt_lib.date.fromisoformat(lock_fecha_inicio) if lock_fecha_inicio else None
+        lock_fin_dt = dt_lib.date.fromisoformat(lock_fecha_fin) if lock_fecha_fin else None
+        
+        if lock_ini_dt or lock_fin_dt:
+            print(f"[Bloqueo] Rango de bloqueo estricto configurado: {lock_fecha_inicio} a {lock_fecha_fin}")
+            
+        hints_agregados = 0
+        bloqueados_agregados = 0
+        for (nombre_emp, d, t), var in turnos.items():
+            fecha_actual_d = fecha_inicio_dt_d + dt_lib.timedelta(days=d)
+            
+            es_dia_bloqueado = False
+            if lock_ini_dt and lock_fin_dt:
+                es_dia_bloqueado = (lock_ini_dt <= fecha_actual_d <= lock_fin_dt)
+            elif lock_ini_dt:
+                es_dia_bloqueado = (lock_ini_dt <= fecha_actual_d)
+            elif lock_fin_dt:
+                es_dia_bloqueado = (fecha_actual_d <= lock_fin_dt)
+            
+            es_asignado = (nombre_emp, d, t) in guardias_base_indexadas
+            
+            if es_dia_bloqueado:
+                if es_asignado:
+                    modelo.Add(var == 1)
+                else:
+                    modelo.Add(var == 0)
+                bloqueados_agregados += 1
+            else:
+                if es_asignado:
+                    modelo.AddHint(var, 1)
+                    hints_agregados += 1
+                else:
+                    modelo.AddHint(var, 0)
+        print(f"[Warm Start] Se inyectaron {hints_agregados} hints activos y {len(turnos) - hints_agregados - bloqueados_agregados} hints inactivos. Se bloquearon estrictamente {bloqueados_agregados} variables.")
 
     cargar_y_ejecutar_todas(modelo, ctx)
     
@@ -220,10 +302,16 @@ def resolver_modelo(modelo, turnos, flr_tracker, empleados, dias_del_bloque, fer
         print(f"Estado del Solver desconocido: {status}")
         return None, None, None, []
 
-def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_debug=False, max_time_in_seconds=DEFAULT_MAX_TIME_IN_SECONDS, diagnose=False):
+def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_debug=False, max_time_in_seconds=DEFAULT_MAX_TIME_IN_SECONDS, diagnose=False, cronograma_base_id=None, modo_debug_hard=False, lock_fecha_inicio=None, lock_fecha_fin=None):
     # --- BASE DE DATOS: inicializar y cargar licencias ---
     db_schema.inicializar_db()
     db_queries.init_licencias(servicio_id)
+    
+    cronograma_base_guardias = None
+    if cronograma_base_id is not None:
+        print(f"Cargando cronograma base ID {cronograma_base_id} para Warm Start (hints)...")
+        cronograma_base_guardias = db_queries.obtener_guardias_cronograma(cronograma_base_id)
+        print(f"Se cargaron {len(cronograma_base_guardias)} guardias base.")
     
     fecha_inicio_dt = datetime.datetime.strptime(fecha_inicio, "%Y-%m-%d")
     fecha_fin_dt    = datetime.datetime.strptime(fecha_fin,    "%Y-%m-%d")
@@ -268,6 +356,11 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_d
 
     offset_dia = fecha_inicio_dt.weekday()
     
+    # Si modo_debug_hard está activo, el modelo se construye con restricciones duras normales (modo_debug=False)
+    # y assumptions forzadas para poder aislar el conflicto.
+    construir_modo_debug = False if modo_debug_hard else modo_debug
+    force_assumptions = True if modo_debug_hard else False
+
     modelo, turnos, flr_tracker, ctx = construir_modelo(
         empleados, config_turnos, turnos_dict, demanda_req, ajustes_db,
         DIAS_DEL_BLOQUE, feriados_indices, offset_dia, num_semanas,
@@ -277,13 +370,53 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_d
         servicio_id=servicio_id,
         fecha_inicio=fecha_inicio,
         fecha_fin=fecha_fin,
-        modo_debug=modo_debug
+        modo_debug=construir_modo_debug,
+        force_assumptions=force_assumptions,
+        cronograma_base_guardias=cronograma_base_guardias,
+        modo_debug_hard=modo_debug_hard,
+        lock_fecha_inicio=lock_fecha_inicio,
+        lock_fecha_fin=lock_fecha_fin
     )
 
     df_resultados, flrs_asignados, df_cat_semanas, infracciones = resolver_modelo(
         modelo, turnos, flr_tracker, empleados, DIAS_DEL_BLOQUE, feriados_indices, 
         fecha_inicio, offset_dia, config_turnos, ctx=ctx, max_time_in_seconds=max_time_in_seconds
     )
+
+    if df_resultados is None and modo_debug_hard:
+        from restricciones.hard import REGLAS_HARD
+        from restricciones.double import REGLAS_DOUBLE
+        from restricciones.debug_hard import ejecutar_diagnostico_hard
+        
+        codigos_reglas = []
+        for r in REGLAS_HARD + REGLAS_DOUBLE:
+            codigos_reglas.append(r.rsplit('.', 1)[-1].upper())
+            
+        def resolver_con_exclusiones(exclusiones_dict):
+            modelo_t, turnos_t, flr_t, ctx_t = construir_modelo(
+                empleados, config_turnos, turnos_dict, demanda_req, ajustes_db,
+                DIAS_DEL_BLOQUE, feriados_indices, offset_dia, num_semanas,
+                reglas_servicio=reglas_servicio_db,
+                ajustes_reglas_personal=ajustes_reglas,
+                historial_semana_previa=historial_semana_previa,
+                servicio_id=servicio_id,
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                modo_debug=False,
+                force_assumptions=False,
+                cronograma_base_guardias=cronograma_base_guardias,
+                modo_debug_hard=False,
+                exclusiones=exclusiones_dict,
+                lock_fecha_inicio=lock_fecha_inicio,
+                lock_fecha_fin=lock_fecha_fin
+            )
+            solver_t = cp_model.CpSolver()
+            solver_t.parameters.max_time_in_seconds = 10
+            solver_t.parameters.num_search_workers = 4
+            status_t = solver_t.Solve(modelo_t)
+            return status_t in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+            
+        ejecutar_diagnostico_hard(empleados, codigos_reglas, resolver_con_exclusiones)
 
     if df_resultados is None and not modo_debug and diagnose:
         print("Re-ejecutando modelo con assumptions activas para identificar conflicto...")
@@ -297,7 +430,10 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_d
             fecha_inicio=fecha_inicio,
             fecha_fin=fecha_fin,
             modo_debug=modo_debug,
-            force_assumptions=True
+            force_assumptions=True,
+            cronograma_base_guardias=cronograma_base_guardias,
+            lock_fecha_inicio=lock_fecha_inicio,
+            lock_fecha_fin=lock_fecha_fin
         )
         resolver_modelo(
             modelo_ass, turnos_ass, flr_tracker_ass, empleados, DIAS_DEL_BLOQUE, feriados_indices, 
@@ -350,11 +486,26 @@ def main():
     parser = argparse.ArgumentParser(description="Motor de Optimización de Cronogramas")
     parser.add_argument("--servicio", type=int, default=DEFAULT_SERVICIO_ID, help="ID del servicio")
     parser.add_argument("--inicio", type=str, default=DEFAULT_FECHA_INICIO, help="Fecha inicio (YYYY-MM-DD)")
-    parser.add_argument("--fin", type=str, default=None, help="Fecha fin (YYYY-MM-DD, default: fin del mes de inicio)")
+    parser.add_argument("--fin", type=str, default=DEFAULT_FECHA_FIN, help="Fecha fin (YYYY-MM-DD, default: fin del mes de inicio)")
     parser.add_argument("--notas", type=str, default="Generado via CLI", help="Notas del cronograma")
-    parser.add_argument("--debug", action="store_true", help="Habilitar MODO_DEBUG (relajar restricciones a penalizaciones extremas)")
+    
+    parser.add_argument("--debug-soft", action="store_true", help="Habilitar MODO_DEBUG Soft (relajar restricciones a penalizaciones extremas)")
+    parser.add_argument("--no-debug-soft", action="store_false", dest="debug_soft", help="Deshabilitar MODO_DEBUG Soft")
+    parser.set_defaults(debug_soft=DEFAULT_DEBUG_SOFT)
+
+    parser.add_argument("--debug-hard", action="store_true", help="Habilitar MODO_DEBUG Hard (diagnóstico iterativo desactivando reglas y personas)")
+    parser.add_argument("--no-debug-hard", action="store_false", dest="debug_hard", help="Deshabilitar MODO_DEBUG Hard")
+    parser.set_defaults(debug_hard=DEFAULT_DEBUG_HARD)
+
     parser.add_argument("--timeout", type=int, default=DEFAULT_MAX_TIME_IN_SECONDS, help="Tiempo máximo de búsqueda en segundos")
+    
     parser.add_argument("--diagnose", action="store_true", help="Fuerza el uso de assumptions para diagnóstico de conflictos en caso de INFEASIBLE")
+    parser.add_argument("--no-diagnose", action="store_false", dest="diagnose", help="Deshabilitar diagnóstico de conflictos")
+    parser.set_defaults(diagnose=DEFAULT_DIAGNOSE)
+
+    parser.add_argument("--crono-base", type=int, default=DEFAULT_CRONOGRAMA_BASE_ID, help="ID del cronograma base para Warm Start (hints)")
+    parser.add_argument("--lock-inicio", type=str, default=DEFAULT_LOCK_FECHA_INICIO, help="Fecha inicio para bloquear asignaciones del cronograma base (YYYY-MM-DD)")
+    parser.add_argument("--lock-fin", type=str, default=DEFAULT_LOCK_FECHA_FIN, help="Fecha fin para bloquear asignaciones del cronograma base (YYYY-MM-DD)")
     
     args = parser.parse_args()
     
@@ -370,8 +521,18 @@ def main():
             print(f"Error al calcular fecha_fin automáticamente: {e}")
             fecha_fin = fecha_inicio
             
-    print(f"Ejecutando modo CLI para Servicio {args.servicio} ({fecha_inicio} -> {fecha_fin}) [DEBUG={args.debug}, TIMEOUT={args.timeout}, DIAGNOSE={args.diagnose}]...")
-    res = ejecutar_optimizacion(args.servicio, fecha_inicio, fecha_fin, notas=args.notas, modo_debug=args.debug, max_time_in_seconds=args.timeout, diagnose=args.diagnose)
+    print(f"Ejecutando modo CLI para Servicio {args.servicio} ({fecha_inicio} -> {fecha_fin}) [DEBUG_SOFT={args.debug_soft}, DEBUG_HARD={args.debug_hard}, TIMEOUT={args.timeout}, DIAGNOSE={args.diagnose}, CRONO_BASE={args.crono_base}, LOCK_INICIO={args.lock_inicio}, LOCK_FIN={args.lock_fin}]...")
+    res = ejecutar_optimizacion(
+        args.servicio, fecha_inicio, fecha_fin,
+        notas=args.notas,
+        modo_debug=args.debug_soft,
+        max_time_in_seconds=args.timeout,
+        diagnose=args.diagnose,
+        cronograma_base_id=args.crono_base,
+        modo_debug_hard=args.debug_hard,
+        lock_fecha_inicio=args.lock_inicio,
+        lock_fecha_fin=args.lock_fin
+    )
     print(res)
 
 

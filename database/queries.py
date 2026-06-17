@@ -478,6 +478,7 @@ def cargar_licencias_db(fecha_inicio_str=None, fecha_fin_str=None, servicio_id=N
                     FROM licencias l
                     JOIN personal p ON l.nombre = p.nombre
                     WHERE p.servicio_id = ? AND l.fecha_inicio <= ? AND l.fecha_fin >= ?
+                      AND COALESCE(l.activa, 1) = 1
                     ORDER BY l.nombre, l.fecha_inicio
                 """
                 rows = conn.execute(query, (servicio_id, fecha_fin_str, fecha_inicio_str)).fetchall()
@@ -487,6 +488,7 @@ def cargar_licencias_db(fecha_inicio_str=None, fecha_fin_str=None, servicio_id=N
                     FROM licencias l
                     JOIN personal p ON l.nombre = p.nombre
                     WHERE p.servicio_id = ?
+                      AND COALESCE(l.activa, 1) = 1
                     ORDER BY l.nombre, l.fecha_inicio
                 """
                 rows = conn.execute(query, (servicio_id,)).fetchall()
@@ -496,12 +498,14 @@ def cargar_licencias_db(fecha_inicio_str=None, fecha_fin_str=None, servicio_id=N
                     SELECT nombre, tipo, fecha_inicio, fecha_fin
                     FROM licencias
                     WHERE fecha_inicio <= ? AND fecha_fin >= ?
+                      AND COALESCE(activa, 1) = 1
                     ORDER BY nombre, fecha_inicio
                 """, (fecha_fin_str, fecha_inicio_str)).fetchall()
             else:
                 rows = conn.execute("""
                     SELECT nombre, tipo, fecha_inicio, fecha_fin
                     FROM licencias
+                    WHERE COALESCE(activa, 1) = 1
                     ORDER BY nombre, fecha_inicio
                 """).fetchall()
 
@@ -581,17 +585,18 @@ def listar_licencias():
     """Imprime todas las licencias cargadas en la BD."""
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT nombre, tipo, fecha_inicio, fecha_fin
+            SELECT nombre, tipo, fecha_inicio, fecha_fin, COALESCE(activa, 1) as activa
             FROM licencias
             ORDER BY tipo, fecha_inicio, nombre
         """).fetchall()
     if not rows:
         print("No hay licencias cargadas en la BD.")
         return
-    print(f"\n{'Nombre':<22} {'Tipo':<5} {'Inicio':<12} {'Fin'}")
-    print("-" * 55)
+    print(f"\n{'Nombre':<22} {'Tipo':<5} {'Inicio':<12} {'Fin':<12} Activa")
+    print("-" * 65)
     for r in rows:
-        print(f"{r[0]:<22} {r[1]:<5} {r[2]:<12} {r[3]}")
+        activa_str = 'SI' if r[4] else 'NO'
+        print(f"{r[0]:<22} {r[1]:<5} {r[2]:<12} {r[3]:<12} {activa_str}")
 
 def migrar_demanda_a_db(demanda_turnos, ajustes_vacantes=None, servicio_id=1, fecha_inicio_cronograma=None):
     """
@@ -811,5 +816,19 @@ def obtener_infracciones(cronograma_id):
             ORDER BY i.id
         """, (cronograma_id,)).fetchall()
     return rows
+
+
+def obtener_guardias_cronograma(cronograma_id):
+    """
+    Retorna las guardias asignadas a un cronograma_id específico.
+    Devuelve un conjunto de tuplas (nombre, fecha, turno) para facilitar la consulta rápida de hints.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT nombre, fecha, turno FROM guardias WHERE cronograma_id = ?",
+            (cronograma_id,)
+        ).fetchall()
+    return {(nombre, fecha, turno) for nombre, fecha, turno in rows}
+
 
 

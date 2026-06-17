@@ -33,6 +33,7 @@ def migrar():
         ('DESC_POST_NOCHE', {"horas": 24}),
         ('PESO_BRECHA_ANUAL', {"peso": 100}),
         ('PESO_BRECHA_MENSUAL', {"peso": 50}),
+        ('PESO_BRECHA_HORAS', {"peso": 20, "fecha_inicio": "2026-06-22"}),
         ('PESO_BRECHA_SEG', {"peso": 100}),
         ('PESO_EQUIDAD_FL3', {"peso": 500}),
         ('PESO_EQUIDAD_FL4', {"peso": 500}),
