@@ -286,6 +286,16 @@ def inicializar_db():
                 UNIQUE(personal_nombre, puesto_id)
             );
 
+            CREATE TABLE IF NOT EXISTS roles_reglas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                servicio_id INTEGER NOT NULL REFERENCES servicios(id),
+                rol TEXT NOT NULL,
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
+                parametros_json TEXT,
+                activo INTEGER DEFAULT 1,
+                UNIQUE(servicio_id, rol, codigo_regla)
+            );
+
             CREATE TABLE IF NOT EXISTS demanda_config (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 puesto_id INTEGER NOT NULL REFERENCES puestos(id),
@@ -364,6 +374,7 @@ def inicializar_db():
             CREATE INDEX IF NOT EXISTS idx_turnos_ajustes_fecha ON turnos_ajustes(fecha_inicio);
             CREATE INDEX IF NOT EXISTS idx_pra_nombre_regla ON personal_reglas_ajustes(personal_nombre, codigo_regla);
             CREATE INDEX IF NOT EXISTS idx_sra_servicio_regla ON servicios_reglas_ajustes(servicio_id, codigo_regla);
+            CREATE INDEX IF NOT EXISTS idx_roles_reglas_rol ON roles_reglas(servicio_id, rol);
         """)
         
         # Migraciones seguras para tablas existentes
@@ -496,12 +507,26 @@ def inicializar_db():
             for p_id, p_nom, p_serv in puestos_db:
                 puestos_map[(p_serv, p_nom)] = p_id
             
+            # Obtener quiénes ya tienen puestos asignados para no pisar ni alertar en vano
+            ya_asignados = {r[0] for r in conn.execute("SELECT DISTINCT personal_nombre FROM personal_puestos").fetchall()}
+            
             for emp_nombre, emp_rol, emp_cat, emp_serv in empleados_migrar:
+                if emp_nombre in ya_asignados:
+                    continue
+                
                 puestos_a_asignar = []
                 # Reglas heurísticas de migración
                 if emp_serv == 1: # Kinesiologia
                     if emp_cat == 'Ambos':
                         puestos_a_asignar.extend(['UTI', 'UCO'])
+                    elif emp_cat == 'UTI':
+                        puestos_a_asignar.append('UTI')
+                    elif emp_cat == 'UCO':
+                        puestos_a_asignar.append('UCO')
+                    elif emp_cat == 'GENERAL':
+                        puestos_a_asignar.extend(['UTI', 'UCO', 'General'])
+                    elif emp_rol == 'Rotativo' or emp_rol == 'Nocturno':
+                        puestos_a_asignar.extend(['UTI', 'UCO', 'General'])
                     elif emp_rol == 'UTI':
                         puestos_a_asignar.append('UTI')
                     elif emp_rol == 'UCO':
@@ -1108,6 +1133,34 @@ def cargar_reglas_personal(servicio_id=1):
                 reglas[nombre][codigo].extend(parsed)
             else:
                 reglas[nombre][codigo].append(parsed)
+        except json.JSONDecodeError:
+            pass
+    return reglas
+
+def cargar_reglas_rol(servicio_id=1):
+    """Devuelve un diccionario con las reglas por rol de un servicio.
+       { 'Rol': { 'CODIGO_REGLA': [{parametros_json}, ...] } }
+    """
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT rol, codigo_regla, parametros_json
+            FROM roles_reglas
+            WHERE servicio_id = ? AND activo = 1
+        """, (servicio_id,)).fetchall()
+    
+    reglas = {}
+    for rol, codigo, params in rows:
+        if rol not in reglas:
+            reglas[rol] = {}
+        if codigo not in reglas[rol]:
+            reglas[rol][codigo] = []
+            
+        try:
+            parsed = json.loads(params) if params else {}
+            if isinstance(parsed, list):
+                reglas[rol][codigo].extend(parsed)
+            else:
+                reglas[rol][codigo].append(parsed)
         except json.JSONDecodeError:
             pass
     return reglas

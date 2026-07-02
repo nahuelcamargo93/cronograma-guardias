@@ -27,6 +27,7 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
     df = q.cargar_datos_personales_bd(df)
     historial = q.cargar_historial(df, fecha_inicio)
     reglas_db = q.cargar_reglas_personal(servicio_id)
+    reglas_rol_db = q.cargar_reglas_rol(servicio_id)
     
     fecha_inicio_dt = date.fromisoformat(fecha_inicio)
     
@@ -34,18 +35,59 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
     
     for _, row in df.iterrows():
         nombre = row['Nombre']
+        rol = row.get('Rol', '')
+        categoria = row.get('Categoria')
         hist = historial.get(nombre, {})
-        reglas = reglas_db.get(nombre, {})
+        
+        # Combinar reglas: prioridad baja (rol) < prioridad alta (personal)
+        reglas = {}
+        if rol and rol in reglas_rol_db:
+            reglas.update(reglas_rol_db[rol])
+        reglas.update(reglas_db.get(nombre, {}))
         
         # Calcular Horas_Fijas_Semanales
         asigs = reglas.get('ASIGNACION_FIJA', [])
         horas_fijas = sum(a.get('Horas', 0) for a in asigs if isinstance(a, dict))
         
+        # Fallback de puestos habilitados en memoria si no están configurados en la DB
+        puestos_hab = set(row.get('Puestos_Habilitados', []))
+        puestos_prim = set(row.get('Puestos_Primarios', []))
+        if not puestos_hab:
+            if rol in ('Rotativo', 'Nocturno'):
+                puestos_hab = {'UTI', 'UCO', 'General'}
+                puestos_prim = {'UTI', 'UCO', 'General'}
+            elif rol == 'UTI':
+                puestos_hab = {'UTI'}
+                puestos_prim = {'UTI'}
+            elif rol == 'UCO':
+                puestos_hab = {'UCO'}
+                puestos_prim = {'UCO'}
+            elif rol == 'General':
+                puestos_hab = {'General'}
+                puestos_prim = {'General'}
+            elif rol == 'Especial':
+                puestos_hab = {'Especial'}
+                puestos_prim = {'Especial'}
+            else:
+                # Si no coincide el rol, intentar usar la categoría como fallback de compatibilidad
+                if categoria == 'UTI':
+                    puestos_hab = {'UTI'}
+                    puestos_prim = {'UTI'}
+                elif categoria == 'UCO':
+                    puestos_hab = {'UCO'}
+                    puestos_prim = {'UCO'}
+                elif categoria == 'Ambos':
+                    puestos_hab = {'UTI', 'UCO'}
+                    puestos_prim = {'UTI', 'UCO'}
+                elif categoria == 'GENERAL':
+                    puestos_hab = {'UTI', 'UCO', 'General'}
+                    puestos_prim = {'UTI', 'UCO', 'General'}
+        
         dias_lic, tipos_lic = get_dias_y_tipos_licencia(nombre, fecha_inicio_dt, dias_del_bloque)
         emp = Empleado(
             nombre=nombre,
-            rol=row.get('Rol', ''),
-            categoria=row.get('Categoria'),
+            rol=rol,
+            categoria=categoria,
             servicio_id=servicio_id,
             fecha_cumpleanos=row.get('fecha_cumpleanos'),
             es_madre=bool(row.get('es_madre', 0)),
@@ -61,8 +103,8 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
             horas_fijas_semanales=horas_fijas,
             dias_licencia=dias_lic,
             tipos_licencia=tipos_lic,
-            puestos_habilitados=set(row.get('Puestos_Habilitados', [])),
-            puestos_primarios=set(row.get('Puestos_Primarios', [])),
+            puestos_habilitados=puestos_hab,
+            puestos_primarios=puestos_prim,
             reglas=reglas,
             horas_mensuales_reglamentarias=row.get('horas_mensuales_reglamentarias'),
             fecha_inicio_historial=hist.get('Fecha_Inicio_Historial')

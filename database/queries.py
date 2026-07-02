@@ -595,6 +595,34 @@ def cargar_reglas_personal(servicio_id=1):
             pass
     return reglas
 
+def cargar_reglas_rol(servicio_id=1):
+    """Devuelve un diccionario con las reglas por rol de un servicio.
+       { 'Rol': { 'CODIGO_REGLA': [{parametros_json}, ...] } }
+    """
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT rol, codigo_regla, parametros_json
+            FROM roles_reglas
+            WHERE servicio_id = ? AND activo = 1
+        """, (servicio_id,)).fetchall()
+    
+    reglas = {}
+    for rol, codigo, params in rows:
+        if rol not in reglas:
+            reglas[rol] = {}
+        if codigo not in reglas[rol]:
+            reglas[rol][codigo] = []
+            
+        try:
+            parsed = json.loads(params) if params else {}
+            if isinstance(parsed, list):
+                reglas[rol][codigo].extend(parsed)
+            else:
+                reglas[rol][codigo].append(parsed)
+        except json.JSONDecodeError:
+            pass
+    return reglas
+
 def listar_licencias():
     """Imprime todas las licencias cargadas en la BD."""
     with get_connection() as conn:

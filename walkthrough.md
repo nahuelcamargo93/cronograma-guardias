@@ -188,3 +188,25 @@ Se implementaron mejoras críticas en el reporte Excel para el Servicio 3 (Médi
 * El sistema identificó el archivo existente en Google Drive (`1KxwO0ND3TLswzlBJl-MkuTAbxBzWSZAt_V50vwjZMXM`) y actualizó su contenido directamente:
   - **Enlace Web:** `https://docs.google.com/spreadsheets/d/1KxwO0ND3TLswzlBJl-MkuTAbxBzWSZAt_V50vwjZMXM/edit?usp=drivesdk`
 
+---
+
+## 10. Implementación de Perfiles por Rol (Jerarquía Dinámica)
+
+Se implementó un sistema de perfiles de trabajo dinámicos por **rol** en la base de datos y la capa de carga, resolviendo de raíz las advertencias ruidosas de migración y permitiendo asociar un rol con un esquema de reglas reutilizables.
+
+### Cambios Realizados:
+1. **Nuevas Tablas de Base de Datos:**
+   - Se crearon las tablas `roles_reglas` (y su contraparte de soporte `categorias_reglas`) junto con los índices correspondientes (`idx_roles_reglas_rol` e `idx_categorias_reglas_cat`) en [database/schema.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/database/schema.py) y [db.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/db.py).
+2. **Consultas para Perfiles:**
+   - Se implementó la función `cargar_reglas_rol(servicio_id)` en [database/queries.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/database/queries.py) y [db.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/db.py).
+3. **Fusión en el Cargador (Jerarquía Segura):**
+   - En [database/data_loader.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/database/data_loader.py), se unifican de forma transparente las reglas del rol del empleado con sus excepciones individuales en `reglas_combinadas`, respetando la prioridad de anulación establecida (individual pisa a rol).
+   - De esta forma, el motor matemático y `rule_engine.py` no sufren cambios en sus firmas ni en su lógica interna.
+4. **Fallback Dinámico de Puestos en Memoria:**
+   - En [database/data_loader.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/database/data_loader.py), si un empleado carece de puestos configurados en `personal_puestos` (como `Martin, Ricardo`), se le asignan por defecto los puestos correspondientes a su rol (ej: `'Rotativo'` -> `['UTI', 'UCO', 'General']`).
+   - Se modificaron las heurísticas de migración en la inicialización de la base de datos para omitir advertencias redundantes sobre profesionales que ya tienen configuraciones en la tabla `personal_puestos` o cuyos roles son conocidos.
+
+### Verificación Exitosa:
+* Se desarrolló y ejecutó el test unitario [scratch/test_roles_reglas.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/scratch/test_roles_reglas.py), comprobando la herencia de reglas y la anulación correcta.
+* Se ejecutó el motor con el Servicio 1 para Agosto de 2026 completándose con éxito sin registrar alertas ruidosas en consola.
+

@@ -223,6 +223,16 @@ def inicializar_db(servicio_id=None):
                 UNIQUE(personal_nombre, puesto_id)
             );
 
+            CREATE TABLE IF NOT EXISTS roles_reglas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                servicio_id INTEGER NOT NULL REFERENCES servicios(id),
+                rol TEXT NOT NULL,
+                codigo_regla TEXT NOT NULL REFERENCES reglas_catalogo(codigo_regla) ON UPDATE CASCADE ON DELETE CASCADE,
+                parametros_json TEXT,
+                activo INTEGER DEFAULT 1,
+                UNIQUE(servicio_id, rol, codigo_regla)
+            );
+
             CREATE TABLE IF NOT EXISTS demanda_config (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 puesto_id INTEGER NOT NULL REFERENCES puestos(id),
@@ -302,6 +312,7 @@ def inicializar_db(servicio_id=None):
             CREATE INDEX IF NOT EXISTS idx_turnos_ajustes_fecha ON turnos_ajustes(fecha_inicio);
             CREATE INDEX IF NOT EXISTS idx_pra_nombre_regla ON personal_reglas_ajustes(personal_nombre, codigo_regla);
             CREATE INDEX IF NOT EXISTS idx_sra_servicio_regla ON servicios_reglas_ajustes(servicio_id, codigo_regla);
+            CREATE INDEX IF NOT EXISTS idx_roles_reglas_rol ON roles_reglas(servicio_id, rol);
 
             CREATE TABLE IF NOT EXISTS infracciones_debug (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -543,11 +554,25 @@ def inicializar_db(servicio_id=None):
             for p_id, p_nom, p_serv in puestos_db:
                 puestos_map[(p_serv, p_nom)] = p_id
             
+            # Obtener quiénes ya tienen puestos asignados para no pisar ni alertar en vano
+            ya_asignados = {r[0] for r in conn.execute("SELECT DISTINCT personal_nombre FROM personal_puestos").fetchall()}
+            
             for emp_nombre, emp_rol, emp_cat, emp_serv in empleados_migrar:
+                if emp_nombre in ya_asignados:
+                    continue
+                
                 puestos_a_asignar = []
                 if emp_serv == 1:
                     if emp_cat == 'Ambos':
                         puestos_a_asignar.extend(['UTI', 'UCO'])
+                    elif emp_cat == 'UTI':
+                        puestos_a_asignar.append('UTI')
+                    elif emp_cat == 'UCO':
+                        puestos_a_asignar.append('UCO')
+                    elif emp_cat == 'GENERAL':
+                        puestos_a_asignar.extend(['UTI', 'UCO', 'General'])
+                    elif emp_rol == 'Rotativo' or emp_rol == 'Nocturno':
+                        puestos_a_asignar.extend(['UTI', 'UCO', 'General'])
                     elif emp_rol == 'UTI':
                         puestos_a_asignar.append('UTI')
                     elif emp_rol == 'UCO':
