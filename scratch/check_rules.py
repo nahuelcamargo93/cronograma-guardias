@@ -1,25 +1,12 @@
-import sqlite3
+import database.connection as c
+import json
 
-conn = sqlite3.connect('cronograma_inteligente.db')
-cursor = conn.cursor()
-
-cursor.execute("""
-    SELECT id, personal_nombre, codigo_regla, fecha_inicio, fecha_fin, accion, parametros_json
-    FROM personal_reglas_ajustes
-    WHERE codigo_regla = 'SOLO_ASIGNACIONES_FIJAS' AND activo = 1
-""")
-
-print("=== AJUSTES DE SOLO_ASIGNACIONES_FIJAS ===")
-for r in cursor.fetchall():
-    print(r)
-
-cursor.execute("""
-    SELECT personal_nombre, codigo_regla, activo, parametros_json
-    FROM personal_reglas
-    WHERE codigo_regla = 'SOLO_ASIGNACIONES_FIJAS' AND activo = 1
-""")
-print("\n=== REGLAS FIJAS DE SOLO_ASIGNACIONES_FIJAS ===")
-for r in cursor.fetchall():
-    print(r)
-
-conn.close()
+conn = c.get_connection()
+tables = ['servicios_reglas', 'personal_reglas', 'servicios_reglas_ajustes', 'personal_reglas_ajustes']
+for t in tables:
+    print("--- Table:", t)
+    rows = conn.execute(f"select * from {t}").fetchall()
+    for row in rows:
+        row_str = str(row)
+        if any(x in row_str for x in ["D_Planta", "N_Planta", "G_Planta", "D_Residente", "N_Residente", "G_Residente"]):
+            print(row)

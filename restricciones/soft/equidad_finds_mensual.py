@@ -10,7 +10,7 @@ from database.connection import get_connection
 
 def apply(modelo, ctx):
     # 1. Obtener parámetros de la regla
-    peso_cfg = ctx.reglas_servicio.get('PESO_EQUIDAD_FINDES_MENSUAL', {})
+    peso_cfg = ctx.reglas_servicio.get('PESO_EQUIDAD_FINDES_MENSUAL') or ctx.reglas_servicio.get('EQUIDAD_FINDES_MENSUAL', {})
     peso = peso_cfg.get('peso', 500) if isinstance(peso_cfg, dict) else 500
     tipo_regla = peso_cfg.get('tipo', 'MENSUAL').upper() if isinstance(peso_cfg, dict) else 'MENSUAL'
     fecha_inicio_niv_str = peso_cfg.get('fecha_inicio') if isinstance(peso_cfg, dict) else None
@@ -86,9 +86,10 @@ def apply(modelo, ctx):
         dias_por_semana.setdefault(lunes.isoformat(), []).append(d)
 
     # 5. Modelar en OR-Tools
+    codigo_activo = 'PESO_EQUIDAD_FINDES_MENSUAL' if 'PESO_EQUIDAD_FINDES_MENSUAL' in ctx.reglas_servicio else 'EQUIDAD_FINDES_MENSUAL'
     for emp in ctx.empleados:
         params = _re.resolver_parametros_regla(
-            'PESO_EQUIDAD_FINDES_MENSUAL', emp.nombre, ctx.fecha_inicio,
+            codigo_activo, emp.nombre, ctx.fecha_inicio,
             ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
         )
         if _re.regla_suspendida(params):

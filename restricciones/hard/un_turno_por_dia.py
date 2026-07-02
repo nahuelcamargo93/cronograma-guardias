@@ -21,11 +21,28 @@ def apply(modelo, ctx) -> None:
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
             )
             if _re.regla_existe(params) and isinstance(params, list):
+                # Detectar si hay franco forzado hoy
+                params_franco = _re.resolver_parametros_regla(
+                    'FRANCO_FORZADO', emp.nombre, fecha_d,
+                    ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+                )
+                tiene_franco = _re.regla_existe(params_franco) and not _re.regla_suspendida(params_franco)
+
                 for asig in params:
                     fecha_asig = asig.get('Fecha')
                     dia_asig   = asig.get('Dia')
-                    if (fecha_asig and fecha_asig == fecha_d) or \
-                       (dia_asig and _MAPA_DIAS.get(dia_asig) == dia_semana and d not in ctx.feriados):
+                    
+                    es_por_fecha = bool(fecha_asig and fecha_asig == fecha_d)
+                    es_por_dia = bool(dia_asig and _MAPA_DIAS.get(dia_asig) == dia_semana and d not in ctx.feriados)
+                    
+                    match = False
+                    if es_por_fecha:
+                        match = True
+                    elif es_por_dia:
+                        if not tiene_franco:
+                            match = True
+
+                    if match:
                         fijos_hoy += 1
 
             max_t = max(1, fijos_hoy)

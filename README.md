@@ -161,3 +161,25 @@ Asegura que ningún profesional tenga más de la cantidad máxima de francos seg
     Y se añade a la función objetivo la penalización $v\_viol \times peso\_soft$.
   - Si no existe historial previo de guardias para el profesional, los días anteriores al inicio del mes se inicializan sin francos para evitar inviabilidades artificiales debido a la falta de datos históricos en la base de datos.
 
+---
+
+## 8. Formatos Especiales de Reporte por Servicio
+
+### Servicio 3 (Área Médica UTI) - Cronograma Semanal Apilado
+El reporte de este servicio se exporta en una estructura **vertical apilada por semanas** para facilitar la legibilidad del cliente en Drive:
+- **Cabecera Fija**: La fila 0 está inmovilizada en la parte superior mostrando de forma fija las siglas de los días (L a D) de Lunes a Domingo.
+- **Bloques Semanales**: Cada bloque de semana comienza directamente con la fila de fechas (`d/m`) correspondientes.
+- **Organización de Turnos**: Agrupa en la columna 0 los turnos principales **Día**, **Guardia** y **Noche**. Dentro de cada turno se segregan verticalmente los sub-turnos (Planta y Residente) de forma ordenada.
+- **Bordes Limpios**: Se omiten los bordes interiores (finos y gruesos) negros dentro de cada bloque de turno, usando en su lugar una cuadrícula fina gris (`#D9D9D9`) para simular las líneas por defecto, dejando la línea negra gruesa (`bottom = 5`) exclusivamente para delimitar el final de cada turno principal y la semana.
+- **Validación de Carga**: Cada celda editable en Drive cuenta con una validación de datos (**menú desplegable**) con los apellidos oficiales de los médicos del plantel activo, previniendo errores de tipeo y asegurando compatibilidad con el importador.
+- **Separador Semanal**: Se deja una única fila vacía de separación entre bloques de semanas.
+- **Compatibilidad**: El importador dinámico en `importar_cronograma_sheets.py` detecta secuencialmente los bloques y decodifica las guardias utilizando los roles del personal.
+
+---
+
+## 9. Política de Cero Fallbacks Silenciosos
+
+Para garantizar la robustez del sistema y evitar errores de configuración que pasen inadvertidos en producción:
+- **Prohibición de Fallbacks Implícitos:** No se permite que el motor matemático, los scripts de importación/exportación o las rutinas de migración resuelvan inconsistencias o faltas de datos (por ejemplo, empleados sin puestos asignados o sin horas reglamentarias) de forma silenciosa.
+- **Registro de Alertas:** Cualquier valor asumido por omisión debido a una configuración incompleta debe registrar un mensaje de advertencia visible (`logging.warning` en el motor, o alertas claras en consola para herramientas CLI).
+- **Validaciones en Código Futuro:** Al implementar nuevas reglas, servicios o exportadores, se debe asegurar que se valide la presencia y consistencia de los datos requeridos, alertando de inmediato si falta alguna configuración o si se aplica algún criterio de contingencia.

@@ -1,7 +1,7 @@
 import pandas as pd
 from datetime import date, timedelta
 from database import queries as database
-from reportes.generales.base import BaseReport
+from reportes.generales.base import BaseReport, col_to_letter
 
 def exportar_excel_data_prep(df_resultados, config_turnos, df_personal=None):
     df_excel = df_resultados.copy()
@@ -112,7 +112,7 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
     if 'nombre' in df_personal.columns:
         df_personal = df_personal.rename(columns={'nombre': 'Nombre'})
 
-    ws = report.workbook.add_worksheet('Turnos por Personal')
+    ws = report.workbook.add_worksheet('Vista Personal')
     ws.freeze_panes(2, 1) # Inmovilizar cabeceras y nombres de personal
     
     styles = report.styles
@@ -192,6 +192,20 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
             ws.write(r + 1, 1 + col_idx, dia_num, fmt_h2)
             ws.set_column(1 + col_idx, 1 + col_idx, 6)
 
+        # Columna de separación vacía
+        sep_col = len(fechas_unicas) + 1
+        ws.set_column(sep_col, sep_col, 2)
+
+        # Nuevas columnas de totales
+        h_col = len(fechas_unicas) + 2
+        fs_col = len(fechas_unicas) + 3
+        
+        ws.merge_range(r, h_col, r + 1, h_col, "HORAS TRABAJADAS", styles.header_blue)
+        ws.set_column(h_col, h_col, 15)
+        
+        ws.merge_range(r, fs_col, r + 1, fs_col, "FS TRABAJADOS", styles.header_blue)
+        ws.set_column(fs_col, fs_col, 15)
+
     categorias_config = [
         ('A', 'Turno 00hs a 06hs'),
         ('B', 'Turno 06hs a 12hs'),
@@ -265,7 +279,7 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
         escribir_cabeceras_com(ws, row_ex)
         
         # 2. Fila Banner del Turno
-        ws.merge_range(row_ex + 2, 0, row_ex + 2, len(fechas_unicas), banner_label.upper(), banner_format)
+        ws.merge_range(row_ex + 2, 0, row_ex + 2, len(fechas_unicas) + 3, banner_label.upper(), banner_format)
         ws.set_row(row_ex + 2, 24)
         
         # 3. Filas de personal
@@ -334,6 +348,25 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
                 
                 ws.write(curr_row, col_idx + 1, txt, fmt)
             
+            # Calcular fórmulas
+            end_col_let = col_to_letter(len(fechas_unicas))
+            formula_horas = f'=(COUNTIF(B{curr_row+1}:{end_col_let}{curr_row+1}, "SUP") + COUNTIF(B{curr_row+1}:{end_col_let}{curr_row+1}, "ADM") + COUNTIF(B{curr_row+1}:{end_col_let}{curr_row+1}, "MON")) * 6'
+            
+            weekend_cols = []
+            for col_idx, fecha in enumerate(fechas_unicas):
+                dt = date.fromisoformat(fecha)
+                if dt.weekday() >= 5:
+                    weekend_cols.append(col_to_letter(col_idx + 1))
+            
+            if weekend_cols:
+                formula_fs = "=" + "+".join(f'({col_let}{curr_row+1}="SUP")+({col_let}{curr_row+1}="ADM")+({col_let}{curr_row+1}="MON")' for col_let in weekend_cols)
+            else:
+                formula_fs = "=0"
+                
+            # Escribir fórmulas en las columnas nuevas
+            ws.write_formula(curr_row, len(fechas_unicas) + 2, formula_horas, styles.cell)
+            ws.write_formula(curr_row, len(fechas_unicas) + 3, formula_fs, styles.cell)
+            
             curr_row += 1
             
         # 4. Fila de Total Monitoristas
@@ -342,6 +375,10 @@ def generar_vista_agrupada_sheet(report, df_persona, df_personal, fechas_unicas)
             is_sep = (date.fromisoformat(fecha).weekday() == 6)
             fmt = styles.total_val_week if is_sep else styles.total_val
             ws.write(curr_row, col_idx + 1, mon_counts[col_idx], fmt)
+            
+        # Formatear celdas de las columnas extras en la fila de totales como vacías
+        ws.write(curr_row, len(fechas_unicas) + 2, "", styles.total_val)
+        ws.write(curr_row, len(fechas_unicas) + 3, "", styles.total_val)
             
         curr_row += 1
             

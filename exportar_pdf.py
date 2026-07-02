@@ -206,6 +206,7 @@ def procesar_guardias(rows):
             guardias_por_fecha[fecha]["Noche"].append(nombre)
         else:
             # Fallback seguro
+            print(f"⚠️ [PDF] Advertencia: El turno '{turno}' para '{nombre}' no coincide con los prefijos conocidos (G/D/N). Clasificado como 'Guardia' por fallback seguro.")
             guardias_por_fecha[fecha]["Guardia"].append(nombre)
             
     return guardias_por_fecha

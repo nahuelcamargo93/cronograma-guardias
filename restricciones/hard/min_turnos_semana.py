@@ -43,7 +43,7 @@ def apply(modelo, ctx) -> None:
 
             # 1. Contar turnos trabajados en el historial que pertenecen a esta semana
             prev_sem = [h for h in hist_emp
-                        if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_y, iso_w)]
+                        if date.fromisoformat(h['fecha']).isocalendar()[:2] == (iso_y, iso_w) and h.get('turno') != 'FCG']
             turnos_prev = len(prev_sem)
 
             # 2. Contar licencias en el historial que corresponden a esta semana
@@ -64,46 +64,6 @@ def apply(modelo, ctx) -> None:
                 min_turnos_req = round(min_turnos * dias_conocidos / 7)
             else:
                 min_turnos_req = min_turnos
-
-            # Capar dinámicamente según horas mensuales reglamentarias y duración de turnos, o borrador del mes actual, o historial
-            turnos_esperados_mes = None
-            if emp.horas_mensuales_reglamentarias and emp.horas_mensuales_reglamentarias > 0:
-                horas_habilitadas = []
-                for d, _ in days:
-                    td = "Finde_Feriado" if is_finde(d, ctx.offset_dia, ctx.feriados) else "Semana"
-                    for t in ctx.demanda_turnos.get(td, {}).keys():
-                        if (emp.nombre, d, t) in ctx.turnos:
-                            if t in ctx.turnos_dict:
-                                horas_habilitadas.append(ctx.turnos_dict[t].horas)
-                if horas_habilitadas:
-                    duracion_turno = max(horas_habilitadas)
-                    turnos_esperados_mes = emp.horas_mensuales_reglamentarias / duracion_turno
-
-            # Si no hay horas reglamentarias, buscar si hay guardias precargadas en borrador para el mes actual
-            if turnos_esperados_mes is None:
-                try:
-                    with q.get_connection() as conn:
-                        row = conn.execute("""
-                            SELECT COUNT(*) FROM guardias 
-                            WHERE nombre = ? AND fecha BETWEEN ? AND ?
-                        """, (emp.nombre, ctx.fecha_inicio, ctx.fecha_fin)).fetchone()
-                        turnos_mes_actual = row[0] if row else 0
-                    if turnos_mes_actual > 0:
-                        turnos_esperados_mes = turnos_mes_actual
-                except Exception:
-                    pass
-
-            # Fallback al historial de guardias del mes anterior si no hay guardias en el mes actual
-            if turnos_esperados_mes is None:
-                if hist_emp:
-                    turnos_esperados_mes = len(hist_emp)
-                else:
-                    turnos_esperados_mes = 0  # Evitar forzar mínimos en personal inactivo/sin historial
-
-            if turnos_esperados_mes is not None:
-                semanas_mes = ctx.dias / 7.0
-                max_turnos_prom_sem = turnos_esperados_mes / semanas_mes
-                min_turnos_req = min(min_turnos_req, max(0, int(max_turnos_prom_sem)))
 
             if min_turnos_req <= 0:
                 continue

@@ -163,3 +163,28 @@ Se organizaron y segmentaron los generadores de reportes del directorio `reporte
   - `Cronograma_Enfermeria_UTI_actualizado.xlsx`
   - `Cronograma_Area_Medica_UTI.xlsx`
   - `Cronograma_Servicio_COM.xlsx`
+
+---
+
+## 9. Corrección de Fórmulas Dinámicas, Formato y Subida a Drive (Servicio 3)
+
+Se implementaron mejoras críticas en el reporte Excel para el Servicio 3 (Médicos) y en la sincronización con Google Drive:
+
+### Cambios Realizados:
+1. **Fórmulas Dinámicas Robustas en "Vista por Personal":**
+   - Se ajustó el generador de fórmulas dinámicas para utilizar referencias individuales por celda y evitar colisiones de llaves (`{row}`) en Python al compilar las expresiones.
+   - Se corrigieron los nombres de licencias entre comillas dobles (ej: `"LAR"`, `"LM"`, `"CM"`, `"LPP"`) dentro de las expresiones condicionales de Excel, solucionando el error `#NAME?` o `#ERROR!`.
+2. **Redondeo de Horas de Licencia:**
+   - Se envolvió la fórmula de cálculo de horas de licencia en la función `ROUND(..., 0)` para que muestre horas enteras sin decimales.
+3. **Evitar Duplicados en Google Drive:**
+   - Se modificó `subir_cronograma_drive.py` agregando una búsqueda previa (`service.files().list`) por nombre de archivo y ID de carpeta contenedora.
+   - Si se encuentra un archivo coincidente, se actualiza mediante `service.files().update` con `media_body`, reemplazando el contenido en lugar de duplicar el archivo.
+
+### Verificación Exitosa:
+* Se ejecutó el script con éxito:
+  ```powershell
+  .\venv\Scripts\python subir_cronograma_drive.py --servicio 3 --crono-id 535
+  ```
+* El sistema identificó el archivo existente en Google Drive (`1KxwO0ND3TLswzlBJl-MkuTAbxBzWSZAt_V50vwjZMXM`) y actualizó su contenido directamente:
+  - **Enlace Web:** `https://docs.google.com/spreadsheets/d/1KxwO0ND3TLswzlBJl-MkuTAbxBzWSZAt_V50vwjZMXM/edit?usp=drivesdk`
+

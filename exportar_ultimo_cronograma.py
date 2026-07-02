@@ -7,7 +7,7 @@ from database.data_loader import obtener_empleados
 # VARIABLE CONFIGURABLE DE ID DE CRONOGRAMA
 # Dejar en None para exportar el último cronograma de forma automática o elegir por consola.
 # Cambiar por un número entero (ej: 191) para forzar la exportación de un cronograma específico.
-CRONOGRAMA_ID_FORZADO = None
+CRONOGRAMA_ID_FORZADO = 591
 
 def main():
     conn = sqlite3.connect('cronograma_inteligente.db')

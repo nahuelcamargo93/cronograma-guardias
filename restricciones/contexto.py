@@ -69,6 +69,7 @@ class ContextoModelo:
     penalizaciones:  list = field(default_factory=list)
     assumptions:     list = field(default_factory=list)
     exclusiones:     set = field(default_factory=set)
+    dias_bloqueados: set = field(default_factory=set)
 
     # Historial y ajustes (opcionales, necesarios para reglas de equidad)
     historial_semana_previa: dict = field(default_factory=dict)

@@ -71,11 +71,30 @@ def migrar_db_a_codigo_regla(conn):
         conn.execute("ALTER TABLE personal_reglas_new RENAME TO personal_reglas")
         print("Migración de base de datos finalizada con éxito.")
 
+def migrar_db_solo_importacion(conn):
+    """Agrega la columna solo_importacion a la tabla turnos_config si no existe."""
+    try:
+        cur = conn.execute("PRAGMA table_info(turnos_config)")
+        columns = [row[1] for row in cur.fetchall()]
+        if columns and 'solo_importacion' not in columns:
+            print("Migrando turnos_config para agregar solo_importacion...")
+            conn.execute("ALTER TABLE turnos_config ADD COLUMN solo_importacion INTEGER DEFAULT 0")
+            print("Columna solo_importacion agregada con éxito.")
+        
+        # Actualizar FCG y TTN para que sean solo de importación y estén activos en Enfermería
+        conn.execute("""
+            UPDATE turnos_config 
+            SET solo_importacion = 1, activo = 1 
+            WHERE servicio_id = 2 AND nombre IN ('FCG', 'TTN')
+        """)
+    except sqlite3.OperationalError as e:
+        print(f"Error al verificar/migrar columna solo_importacion: {e}")
 
-def inicializar_db():
+def inicializar_db(servicio_id=None):
     """Crea las tablas si no existen. Seguro de llamar múltiples veces."""
     with get_connection() as conn:
         migrar_db_a_codigo_regla(conn)
+        migrar_db_solo_importacion(conn)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS organizaciones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,11 +251,13 @@ def inicializar_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 servicio_id INTEGER NOT NULL REFERENCES servicios(id),
                 nombre TEXT NOT NULL,
+                sigla TEXT,
                 hora_inicio TEXT,
                 horas INTEGER NOT NULL,
                 dias_semana TEXT DEFAULT '0,1,2,3,4,5,6',
                 orden INTEGER DEFAULT 0,
                 activo INTEGER DEFAULT 1,
+                solo_importacion INTEGER DEFAULT 0,
                 UNIQUE(servicio_id, nombre)
             );
 
@@ -342,6 +363,10 @@ def inicializar_db():
 
         try:
             conn.execute("ALTER TABLE turnos_config ADD COLUMN puesto_id INTEGER REFERENCES puestos(id)")
+        except sqlite3.OperationalError: pass
+
+        try:
+            conn.execute("ALTER TABLE turnos_config ADD COLUMN sigla TEXT")
         except sqlite3.OperationalError: pass
 
         try:
@@ -508,7 +533,10 @@ def inicializar_db():
 
         # Migración de personal_puestos
         try:
-            empleados_migrar = conn.execute("SELECT nombre, rol, categoria, servicio_id FROM personal").fetchall()
+            if servicio_id is not None:
+                empleados_migrar = conn.execute("SELECT nombre, rol, categoria, servicio_id FROM personal WHERE servicio_id = ?", (servicio_id,)).fetchall()
+            else:
+                empleados_migrar = conn.execute("SELECT nombre, rol, categoria, servicio_id FROM personal").fetchall()
             puestos_db = conn.execute("SELECT id, nombre, servicio_id FROM puestos").fetchall()
             
             puestos_map = {}
@@ -540,6 +568,8 @@ def inicializar_db():
                             "INSERT OR IGNORE INTO personal_puestos (personal_nombre, puesto_id) VALUES (?, ?)", 
                             (emp_nombre, p_id)
                         )
+                    else:
+                        print(f"⚠️ [MIGRACIÓN WARN] El rol '{p_nom}' para '{emp_nombre}' (Servicio {emp_serv}) no coincide con ningún puesto existente. La asignación automática de personal_puestos fue omitida.")
         except Exception as e:
             print(f"Error en migración automática de personal_puestos: {e}")
 
@@ -575,6 +605,29 @@ def inicializar_db():
             """)
         except Exception as e:
             print(f"Error al inicializar regla FINDE_POST_LICENCIA en servicio 2: {e}")
+
+        # Asegurar turno FCG (Franco cambio de guardia) para servicio_id = 2
+        try:
+            puesto_row = conn.execute("SELECT id FROM puestos WHERE nombre = 'UTI' AND servicio_id = 2").fetchone()
+            puesto_id = puesto_row[0] if puesto_row else None
+            conn.execute("""
+                INSERT OR IGNORE INTO turnos_config (servicio_id, nombre, sigla, hora_inicio, horas, dias_semana, orden, activo, puesto_id)
+                VALUES (2, 'FCG', 'FCG', '08:00', 0, '0,1,2,3,4,5,6', 99, 1, ?)
+            """, (puesto_id,))
+        except Exception as e:
+            print(f"[schema] Error al registrar FCG: {e}")
+
+        # Asegurar turno TTN (Tarde-Tarde Noche) para servicio_id = 2 (activo = 0)
+        try:
+            puesto_row = conn.execute("SELECT id FROM puestos WHERE nombre = 'UTI' AND servicio_id = 2").fetchone()
+            puesto_id = puesto_row[0] if puesto_row else None
+            conn.execute("""
+                INSERT OR IGNORE INTO turnos_config (servicio_id, nombre, sigla, hora_inicio, horas, dias_semana, orden, activo, puesto_id)
+                VALUES (2, 'TTN', 'TTN', '12:00', 12, '0,1,2,3,4,5,6', 100, 0, ?)
+            """, (puesto_id,))
+        except Exception as e:
+            print(f"[schema] Error al registrar TTN: {e}")
+
 
         # Asegurar regla FRANCOS_FIN_MES configurada para servicio_id = 3 y personal Polleti Natalia
         try:
@@ -764,7 +817,10 @@ def inicializar_catalogo_reglas(conn=None):
         ('MIN_HORAS_SEMANA', 'HARD', 'Piso mínimo de horas trabajadas por semana calendario'),
         ('FRANCOS_FIN_MES', 'SOFT', 'Asegura la cantidad de francos en la última semana del mes si esta es incompleta (tiene 4 o 5 días).'),
         ('MIN_TURNOS_SEMANA', 'HARD', 'Piso mínimo de turnos trabajados por semana calendario'),
-        ('MIN_FRANCOS_SEMANA', 'HARD', 'Piso mínimo de francos por semana calendario')
+        ('MIN_FRANCOS_SEMANA', 'HARD', 'Piso mínimo de francos por semana calendario'),
+        ('NO_REPETIR_N_CONSECUTIVO', 'HARD', 'Máximo una semana con turno N (Noche) por mes. JSON: {"modo": "HARD", "peso_soft": 5000}'),
+        ('MANEJO_FINDES', 'HARD', 'Regla maestra de fines de semana: FLR, completos y medios por disponibilidad'),
+        ('MIN_FRANCOS_CONSECUTIVOS', 'SOFT', 'Agrupa los francos en bloques mínimos de N días consecutivos; penaliza o prohíbe francos aislados. JSON: {"modo": "SOFT", "min_francos": 2, "peso_soft": 8000}')
     ]
     if conn is not None:
         for codigo, tipo, desc in reglas_base:

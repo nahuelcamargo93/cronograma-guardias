@@ -8,6 +8,7 @@ LAR = {}
 LPP = {}
 LM  = {}
 CM  = {}
+LI  = {}
 
 def obtener_feriados(fecha_inicio=None, fecha_fin=None, servicio_id=None):
     """
@@ -62,14 +63,24 @@ def incluir_feriado_servicio(fecha, servicio_id):
             (fecha, servicio_id)
         )
 
+def obtener_siglas_turnos(servicio_id):
+    """Retorna un diccionario {nombre_turno: sigla} para un servicio específico."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT nombre, sigla FROM turnos_config WHERE servicio_id = ? AND activo = 1",
+            (servicio_id,)
+        ).fetchall()
+    return {nombre: (sigla if sigla else nombre) for nombre, sigla in rows}
+
 def init_licencias(servicio_id=None):
     """Carga LAR, LPP, LM y CM desde la BD en los dicts de módulo. Llamar una vez al inicio."""
-    global LAR, LPP, LM, CM
+    global LAR, LPP, LM, CM, LI
     raw = cargar_licencias_db(servicio_id=servicio_id)
     LAR.clear()
     LPP.clear()
     LM.clear()
     CM.clear()
+    LI.clear()
     for nombre, rangos in raw.items():
         for (tipo, fi, ff) in rangos:
             tipo_up = tipo.upper()
@@ -81,6 +92,8 @@ def init_licencias(servicio_id=None):
                 LM.setdefault(nombre, []).append((fi, ff))
             elif tipo_up == 'CM':
                 CM.setdefault(nombre, []).append((fi, ff))
+            elif tipo_up == 'LI':
+                LI.setdefault(nombre, []).append((fi, ff))
                 
     # (Se eliminó la carga automática de FLRs aquí para evitar bloqueos en re-ejecuciones)
     pass
@@ -354,7 +367,8 @@ def cargar_guardias_previas(fecha_inicio_str, dias_atras=28, servicio_id=None):
 
 
 def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
-                       feriados_indices, offset_dia, dias_del_bloque, notas="", df_cat_semanas=None):
+                       feriados_indices, offset_dia, dias_del_bloque, notas="", df_cat_semanas=None,
+                       servicio_id=None, tipo="PROGRAMADO"):
     """
     Persiste un cronograma aceptado en la BD.
     Guarda: cabecera en cronogramas, cada guardia en guardias,
@@ -371,10 +385,10 @@ def guardar_cronograma(df_resultados, df_personal, fecha_inicio, fecha_fin,
 
     with get_connection() as conn:
         cur = conn.execute("""
-            INSERT INTO cronogramas (fecha_inicio, fecha_fin, creado_en, notas, estado)
-            VALUES (?, ?, ?, ?, 'borrador')
+            INSERT INTO cronogramas (fecha_inicio, fecha_fin, creado_en, notas, estado, servicio_id, tipo)
+            VALUES (?, ?, ?, ?, 'borrador', ?, ?)
         """, (fecha_inicio, fecha_fin,
-              datetime.now().isoformat(timespec='seconds'), notas))
+              datetime.now().isoformat(timespec='seconds'), notas, servicio_id, tipo))
         cronograma_id = cur.lastrowid
 
         # 2. Bloques de finde largo
@@ -449,8 +463,8 @@ def insertar_licencia(nombre, tipo, fecha_inicio, fecha_fin):
     (mismo nombre, tipo, inicio y fin) la omite silenciosamente.
     """
     tipo = tipo.upper()
-    if tipo not in ('LPP', 'LAR', 'CM', 'LM'):
-        raise ValueError(f"Tipo de licencia inválido: '{tipo}'. Debe ser 'LPP', 'LAR', 'CM' o 'LM'.")
+    if tipo not in ('LPP', 'LAR', 'CM', 'LM', 'LI'):
+        raise ValueError(f"Tipo de licencia inválido: '{tipo}'. Debe ser 'LPP', 'LAR', 'CM', 'LM' o 'LI'.")
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO licencias (nombre, tipo, fecha_inicio, fecha_fin)
@@ -668,7 +682,8 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
     with get_connection() as conn:
         # 1. Cargar Oferta (Turnos Config) con Nombre del Puesto
         rows_turnos = conn.execute("""
-            SELECT tc.id, tc.nombre, tc.horas, tc.hora_inicio, tc.dias_semana, tc.puesto_id, p.nombre as puesto_nombre
+            SELECT tc.id, tc.nombre, tc.horas, tc.hora_inicio, tc.dias_semana, tc.puesto_id, p.nombre as puesto_nombre,
+                   COALESCE(tc.solo_importacion, 0) as solo_importacion
             FROM turnos_config tc
             LEFT JOIN puestos p ON tc.puesto_id = p.id
             WHERE tc.servicio_id = ? AND tc.activo = 1
@@ -677,10 +692,12 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
         
         config = { "Semana": {}, "Finde_Feriado": {}, "Metadata": {} }
         turnos_info = {}
-        for r_id, nombre, horas, h_ini, d_sem, p_id, p_nom in rows_turnos:
+        for r_id, nombre, horas, h_ini, d_sem, p_id, p_nom, solo_imp in rows_turnos:
             # Poblamos la estructura antigua para que main.py pueda crear las variables sin chillar
-            config["Semana"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
-            config["Finde_Feriado"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
+            # Excluimos de la oferta del solver si es de solo importacion
+            if not solo_imp:
+                config["Semana"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
+                config["Finde_Feriado"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
             config["Metadata"][nombre] = {"hora_inicio": h_ini, "puesto_id": p_id, "puesto_nombre": p_nom}
             
             turnos_info[nombre] = {
@@ -759,6 +776,60 @@ def cargar_ajustes_reglas_personal(fecha_inicio, fecha_fin):
             'accion':       accion,
             'params':       json.loads(params) if params else None
         })
+
+    # Cargar asignaciones fijas directamente de la tabla personal_asignaciones_fijas
+    with get_connection() as conn:
+        rows_fijas = conn.execute("""
+            SELECT personal_nombre, fecha, dia_semana, turno
+            FROM personal_asignaciones_fijas
+            WHERE activo = 1 AND (
+                (fecha IS NOT NULL AND fecha BETWEEN ? AND ?) OR
+                (dia_semana IS NOT NULL)
+            )
+        """, (fecha_inicio, fecha_fin)).fetchall()
+
+    def _norm_dia(d):
+        if not d: return d
+        d = d.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        d = d.replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+        return d
+
+    for nombre, fec, dia_sem, turno in rows_fijas:
+        if fec:
+            resultado.setdefault(nombre, []).append({
+                'codigo_regla': 'ASIGNACION_FIJA',
+                'fecha_inicio': fec,
+                'fecha_fin':    fec,
+                'accion':       'SOBRESCRIBIR',
+                'params':       [{'Fecha': fec, 'Turno': turno}]
+            })
+        elif dia_sem:
+            dia_sem_norm = _norm_dia(dia_sem)
+            resultado.setdefault(nombre, []).append({
+                'codigo_regla': 'ASIGNACION_FIJA',
+                'fecha_inicio': fecha_inicio,
+                'fecha_fin':    fecha_fin,
+                'accion':       'SOBRESCRIBIR',
+                'params':       [{'Dia': dia_sem_norm, 'Turno': turno}]
+            })
+
+    # Cargar francos forzados directamente de la tabla personal_francos_forzados
+    with get_connection() as conn:
+        rows_francos = conn.execute("""
+            SELECT personal_nombre, fecha_inicio, fecha_fin
+            FROM personal_francos_forzados
+            WHERE activo = 1 AND NOT (fecha_fin < ? OR fecha_inicio > ?)
+        """, (fecha_inicio, fecha_fin)).fetchall()
+
+    for nombre, fi, ff in rows_francos:
+        resultado.setdefault(nombre, []).append({
+            'codigo_regla': 'FRANCO_FORZADO',
+            'fecha_inicio': fi,
+            'fecha_fin':    ff,
+            'accion':       'SOBRESCRIBIR',
+            'params':       {}
+        })
+
     return resultado
 
 

@@ -40,6 +40,8 @@ class Empleado:
     
     # Días (índices 0..DIAS_DEL_BLOQUE) en los que está de licencia (LPP/LAR)
     dias_licencia: Set[int] = field(default_factory=set)
+    # Mapeo de día (índice) a tipo de licencia (ej. 'LPP', 'LAR', etc.)
+    tipos_licencia: Dict[int, str] = field(default_factory=dict)
 
     # Puestos que la persona puede cubrir
     puestos_habilitados: Set[str] = field(default_factory=set)

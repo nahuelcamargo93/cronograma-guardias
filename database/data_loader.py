@@ -3,16 +3,18 @@ from models import Empleado, Turno
 from database import queries as q
 from datetime import date, timedelta
 
-def get_dias_licencia(nombre: str, fecha_inicio_dt: date, dias_del_bloque: int) -> set:
+def get_dias_y_tipos_licencia(nombre: str, fecha_inicio_dt: date, dias_del_bloque: int) -> tuple[set, dict]:
     bloqueados = set()
-    for licencias in (q.LAR, q.LPP, q.LM, q.CM):
-        for (lic_ini_str, lic_fin_str) in licencias.get(nombre, []):
+    tipos = {}
+    for tipo_nombre, licencias_dict in [('LAR', q.LAR), ('LPP', q.LPP), ('LM', q.LM), ('CM', q.CM), ('LI', q.LI)]:
+        for (lic_ini_str, lic_fin_str) in licencias_dict.get(nombre, []):
             lic_ini = date.fromisoformat(lic_ini_str)
             lic_fin = date.fromisoformat(lic_fin_str)
             for d in range(dias_del_bloque):
                 if lic_ini <= fecha_inicio_dt + timedelta(days=d) <= lic_fin:
                     bloqueados.add(d)
-    return bloqueados
+                    tipos[d] = tipo_nombre
+    return bloqueados, tipos
 
 def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int) -> List[Empleado]:
     import pandas as pd
@@ -39,6 +41,7 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
         asigs = reglas.get('ASIGNACION_FIJA', [])
         horas_fijas = sum(a.get('Horas', 0) for a in asigs if isinstance(a, dict))
         
+        dias_lic, tipos_lic = get_dias_y_tipos_licencia(nombre, fecha_inicio_dt, dias_del_bloque)
         emp = Empleado(
             nombre=nombre,
             rol=row.get('Rol', ''),
@@ -56,7 +59,8 @@ def obtener_empleados(servicio_id: int, fecha_inicio: str, dias_del_bloque: int)
             feriados_previos=hist.get('Feriados_Previos', 0),
             noches_previas=hist.get('Noches_Previas', 0),
             horas_fijas_semanales=horas_fijas,
-            dias_licencia=get_dias_licencia(nombre, fecha_inicio_dt, dias_del_bloque),
+            dias_licencia=dias_lic,
+            tipos_licencia=tipos_lic,
             puestos_habilitados=set(row.get('Puestos_Habilitados', [])),
             puestos_primarios=set(row.get('Puestos_Primarios', [])),
             reglas=reglas,

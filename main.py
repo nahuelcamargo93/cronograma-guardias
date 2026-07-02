@@ -1,3 +1,4 @@
+from numpy import False_
 import pandas as pd
 import datetime
 from datetime import date, timedelta
@@ -13,37 +14,55 @@ import rule_engine as _re
 # CONFIGURACIÓN POR DEFECTO PARA EJECUCIÓN DIRECTA (CLI)
 # Modifica estas variables para no tener que tipearlas por consola
 # ==============================================================================
-"""DEFAULT_SERVICIO_ID = 2
-DEFAULT_FECHA_INICIO = "2026-07-01"
+
+# Enfermeria
+DEFAULT_SERVICIO_ID = 1
+DEFAULT_FECHA_INICIO = "2026-08-01"
 DEFAULT_FECHA_FIN = None
-DEFAULT_MAX_TIME_IN_SECONDS = 1200
+DEFAULT_MAX_TIME_IN_SECONDS = 60*30
 DEFAULT_CRONOGRAMA_BASE_ID = None
 DEFAULT_LOCK_FECHA_INICIO = None
 DEFAULT_LOCK_FECHA_FIN = None
 DEFAULT_DEBUG_SOFT = False
 DEFAULT_DEBUG_HARD = False
 DEFAULT_DIAGNOSE = False
-"""# ==============================================================================
 
-# =====
-#Para medicos julio
+"""
+
+# Medicos
 DEFAULT_SERVICIO_ID = 3
 DEFAULT_FECHA_INICIO = "2026-07-01"
 DEFAULT_FECHA_FIN = None
-DEFAULT_MAX_TIME_IN_SECONDS = 1200
+DEFAULT_MAX_TIME_IN_SECONDS = 200
+DEFAULT_CRONOGRAMA_BASE_ID = 545
+DEFAULT_LOCK_FECHA_INICIO = "2026-07-07"
+DEFAULT_LOCK_FECHA_FIN = "2026-07-13"
+DEFAULT_DEBUG_SOFT = False
+DEFAULT_DEBUG_HARD = False
+DEFAULT_DIAGNOSE = False
+
+# ==============================================================================
+"""
+"""
+# COM
+DEFAULT_SERVICIO_ID = 4
+DEFAULT_FECHA_INICIO = "2026-07-01"
+DEFAULT_FECHA_FIN = None
+DEFAULT_MAX_TIME_IN_SECONDS = 600
 DEFAULT_CRONOGRAMA_BASE_ID = None
 DEFAULT_LOCK_FECHA_INICIO = None
 DEFAULT_LOCK_FECHA_FIN = None
 DEFAULT_DEBUG_SOFT = False
 DEFAULT_DEBUG_HARD = False
 DEFAULT_DIAGNOSE = False
+"""
 # ======
 
 
 def construir_modelo(empleados, demanda_turnos, turnos_dict, demanda_req, ajustes_demanda, dias_del_bloque, 
 feriados, offset_dia, num_semanas, reglas_servicio, ajustes_reglas_personal=None, historial_semana_previa=None, 
 servicio_id=1, fecha_inicio=None, fecha_fin=None, modo_debug=False, force_assumptions=False, cronograma_base_guardias=None, 
-modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=None):
+modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=None, desactivar_soft=False):
     modelo = cp_model.CpModel()
     flr_tracker = {} # Para trackear variables booleanas de FLR y luego leerlas
 
@@ -57,10 +76,29 @@ modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=
         raise ValueError("fecha_inicio es requerida para construir el modelo.")
     fecha_inicio_dt_d = date.fromisoformat(fecha_inicio)
 
+    dias_bloqueados = set()
+    import datetime as dt_lib
+    lock_ini_dt = dt_lib.date.fromisoformat(lock_fecha_inicio) if lock_fecha_inicio else None
+    lock_fin_dt = dt_lib.date.fromisoformat(lock_fecha_fin) if lock_fecha_fin else None
+    if lock_ini_dt or lock_fin_dt:
+        for d in range(dias_del_bloque):
+            fecha_actual_d = fecha_inicio_dt_d + dt_lib.timedelta(days=d)
+            es_dia_bloqueado = False
+            if lock_ini_dt and lock_fin_dt:
+                es_dia_bloqueado = (lock_ini_dt <= fecha_actual_d <= lock_fin_dt)
+            elif lock_ini_dt:
+                es_dia_bloqueado = (lock_ini_dt <= fecha_actual_d)
+            elif lock_fin_dt:
+                es_dia_bloqueado = (fecha_actual_d <= lock_fin_dt)
+            if es_dia_bloqueado:
+                dias_bloqueados.add(d)
+
     for emp in empleados:
         nombre = emp.nombre
         rol_persona = emp.rol
         licencia_dias = emp.dias_licencia
+        if not emp.puestos_habilitados:
+            print(f"[WARN] [main.py] Advertencia: El empleado '{nombre}' no tiene puestos habilitados configurados en 'personal_puestos'. Usando fallback de compatibilidad basado en su rol: '{rol_persona}'.")
         for dia in range(dias_del_bloque):
             dia_semana = (dia + offset_dia) % 7
             es_finde_o_feriado = (dia_semana >= 5) or (dia in feriados)
@@ -98,20 +136,38 @@ modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=
                 turnos[(nombre, dia, t)] = modelo.NewBoolVar(f'turno_{nombre}_dia{dia}_{t}')
     
             # 2. Forzar asignaciones fijas via rule_engine (soporta SUSPENDER y SOBRESCRIBIR)
-            if dia not in licencia_dias:
+            if dia not in licencia_dias and dia not in dias_bloqueados:
                 fecha_dia_str = (fecha_inicio_dt_d + timedelta(days=dia)).isoformat()
                 params = _re.resolver_parametros_regla(
                     'ASIGNACION_FIJA', nombre, fecha_dia_str,
                     reglas_servicio, emp.reglas, ajustes_reglas_personal or {}
                 )
                 if _re.regla_existe(params) and isinstance(params, list):
+                    # Detectar si hay franco forzado hoy
+                    params_franco = _re.resolver_parametros_regla(
+                        'FRANCO_FORZADO', nombre, fecha_dia_str,
+                        reglas_servicio, emp.reglas, ajustes_reglas_personal or {}
+                    )
+                    tiene_franco = _re.regla_existe(params_franco) and not _re.regla_suspendida(params_franco)
+
                     for asig in params:
                         # Soporta día de semana: {"Dia": "Lunes", "Turno": "Mañana_UTI"}
                         # Y fecha puntual:       {"Fecha": "2026-06-15", "Turno": "Tarde_UCO"}
                         fecha_asig = asig.get('Fecha')
                         dia_asig   = asig.get('Dia')
-                        match = (fecha_asig and fecha_asig == fecha_dia_str) or \
-                                (dia_asig and mapa_dias.get(dia_asig) == dia_semana and dia not in feriados)
+                        
+                        es_por_fecha = bool(fecha_asig and fecha_asig == fecha_dia_str)
+                        es_por_dia = bool(dia_asig and mapa_dias.get(dia_asig) == dia_semana and dia not in feriados)
+                        
+                        match = False
+                        if es_por_fecha:
+                            # Prevalece siempre
+                            match = True
+                        elif es_por_dia:
+                            # Prevalece solo si no hay franco forzado
+                            if not tiene_franco:
+                                match = True
+
                         if match:
                             turno_config = asig['Turno'].replace(" ", "_")
                             vars_coincidentes = [
@@ -123,6 +179,7 @@ modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=
             
             # 3. Un solo turno por día (Se delegó a la regla UN_TURNO_POR_DIA cargada desde el catálogo/BD)
             pass
+
 
     ctx = ContextoModelo(
         servicio_id=servicio_id,
@@ -145,13 +202,15 @@ modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=
         flr_tracker=flr_tracker,
         modo_debug=modo_debug,
         modo_debug_hard=modo_debug_hard,
-        exclusiones=exclusiones or set()
+        exclusiones=exclusiones or set(),
+        dias_bloqueados=dias_bloqueados
     )
     ctx.force_assumptions = force_assumptions
+    ctx.desactivar_soft = desactivar_soft
 
     # 4. Inyección de Hints (Warm Start) si hay cronograma base
     if (lock_fecha_inicio or lock_fecha_fin) and not cronograma_base_guardias:
-        print("⚠️ Advertencia: Se especificó rango de bloqueo de fechas, pero no se ha provisto un cronograma base.")
+        print("[WARN] Advertencia: Se especificó rango de bloqueo de fechas, pero no se ha provisto un cronograma base.")
         
     if cronograma_base_guardias:
         import datetime as dt_lib
@@ -218,10 +277,11 @@ def resolver_modelo(modelo, turnos, flr_tracker, empleados, dias_del_bloque, fer
     # Validar modelo antes de resolver
     validacion = modelo.Validate()
     if validacion:
-        print(f"⚠️ Error de validación en el modelo: {validacion}")
+        print(f"[WARN] Error de validación en el modelo: {validacion}")
     
     print("Resolviendo el cronograma con todas las reglas y preferencias...")
     status = solver.Solve(modelo)
+    ctx.ultimo_status_solver = status
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         print("¡CRONOGRAMA GENERADO!")
@@ -304,7 +364,7 @@ def resolver_modelo(modelo, turnos, flr_tracker, empleados, dias_del_bloque, fer
 
 def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_debug=False, max_time_in_seconds=DEFAULT_MAX_TIME_IN_SECONDS, diagnose=False, cronograma_base_id=None, modo_debug_hard=False, lock_fecha_inicio=None, lock_fecha_fin=None):
     # --- BASE DE DATOS: inicializar y cargar licencias ---
-    db_schema.inicializar_db()
+    db_schema.inicializar_db(servicio_id)
     db_queries.init_licencias(servicio_id)
     
     cronograma_base_guardias = None
@@ -384,39 +444,96 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_d
     )
 
     if df_resultados is None and modo_debug_hard:
-        from restricciones.hard import REGLAS_HARD
-        from restricciones.double import REGLAS_DOUBLE
-        from restricciones.debug_hard import ejecutar_diagnostico_hard
-        
-        codigos_reglas = []
-        for r in REGLAS_HARD + REGLAS_DOUBLE:
-            codigos_reglas.append(r.rsplit('.', 1)[-1].upper())
+        if getattr(ctx, 'ultimo_status_solver', None) == cp_model.UNKNOWN:
+            print("\n" + "="*75)
+            print("  [DEBUG HARD] OMITIDO: El modelo dio TIMEOUT (UNKNOWN) en lugar de INFEASIBLE.", flush=True)
+            print("  El modelo no es necesariamente inviable, sino que es complejo/lento de resolver.", flush=True)
+            print("  Se recomienda subir el tiempo límite (--timeout) o usar relajación (--debug-soft).", flush=True)
+            print("="*75 + "\n")
+        else:
+            from restricciones.debug_hard import ejecutar_diagnostico_hard
             
-        def resolver_con_exclusiones(exclusiones_dict):
-            modelo_t, turnos_t, flr_t, ctx_t = construir_modelo(
-                empleados, config_turnos, turnos_dict, demanda_req, ajustes_db,
-                DIAS_DEL_BLOQUE, feriados_indices, offset_dia, num_semanas,
-                reglas_servicio=reglas_servicio_db,
-                ajustes_reglas_personal=ajustes_reglas,
-                historial_semana_previa=historial_semana_previa,
-                servicio_id=servicio_id,
-                fecha_inicio=fecha_inicio,
-                fecha_fin=fecha_fin,
-                modo_debug=False,
-                force_assumptions=False,
-                cronograma_base_guardias=cronograma_base_guardias,
-                modo_debug_hard=False,
-                exclusiones=exclusiones_dict,
-                lock_fecha_inicio=lock_fecha_inicio,
-                lock_fecha_fin=lock_fecha_fin
-            )
-            solver_t = cp_model.CpSolver()
-            solver_t.parameters.max_time_in_seconds = 10
-            solver_t.parameters.num_search_workers = 4
-            status_t = solver_t.Solve(modelo_t)
-            return status_t in (cp_model.OPTIMAL, cp_model.FEASIBLE)
-            
-        ejecutar_diagnostico_hard(empleados, codigos_reglas, resolver_con_exclusiones)
+            codigos_reglas = list(getattr(ctx, 'reglas_duras_aplicadas', set()))
+                
+            def resolver_con_parametros(
+                excluir_reglas=None,
+                sin_licencias_de=None,
+                sin_reglas_de=None,
+                sin_ajustes_de=None,
+                exclusiones_adicionales=None
+            ):
+                import copy
+                
+                # Clonar superficialmente la lista de empleados y clonar licencias/reglas si aplica
+                empleados_clon = []
+                for emp in empleados:
+                    e_copy = copy.copy(emp)
+                    if sin_licencias_de and emp.nombre in sin_licencias_de:
+                        e_copy.dias_licencia = set()
+                    else:
+                        e_copy.dias_licencia = set(emp.dias_licencia)
+                    
+                    if sin_reglas_de and emp.nombre in sin_reglas_de:
+                        e_copy.reglas = {}
+                    else:
+                        e_copy.reglas = dict(emp.reglas)
+                    empleados_clon.append(e_copy)
+                
+                # Clonar ajustes de reglas de personal
+                ajustes_reglas_clon = {}
+                if not sin_ajustes_de:
+                    ajustes_reglas_clon = copy.deepcopy(ajustes_reglas)
+                else:
+                    for k, v in ajustes_reglas.items():
+                        if k == '__servicio__':
+                            ajustes_reglas_clon[k] = v
+                        elif k not in sin_ajustes_de:
+                            ajustes_reglas_clon[k] = v
+
+                # Exclusiones de reglas en ctx
+                exclusiones_dict = set()
+                if excluir_reglas:
+                    for cod in excluir_reglas:
+                        exclusiones_dict.add((cod, None))
+                if exclusiones_adicionales:
+                    exclusiones_dict.update(exclusiones_adicionales)
+                
+                modelo_t, turnos_t, flr_t, ctx_t = construir_modelo(
+                    empleados_clon, config_turnos, turnos_dict, demanda_req, ajustes_db,
+                    DIAS_DEL_BLOQUE, feriados_indices, offset_dia, num_semanas,
+                    reglas_servicio=reglas_servicio_db,
+                    ajustes_reglas_personal=ajustes_reglas_clon,
+                    historial_semana_previa=historial_semana_previa,
+                    servicio_id=servicio_id,
+                    fecha_inicio=fecha_inicio,
+                    fecha_fin=fecha_fin,
+                    modo_debug=False,
+                    force_assumptions=False,
+                    cronograma_base_guardias=cronograma_base_guardias,
+                    modo_debug_hard=False,
+                    exclusiones=exclusiones_dict,
+                    lock_fecha_inicio=lock_fecha_inicio,
+                    lock_fecha_fin=lock_fecha_fin,
+                    desactivar_soft=True
+                )
+                solver_t = cp_model.CpSolver()
+                solver_t.parameters.max_time_in_seconds = 8
+                solver_t.parameters.num_search_workers = 4
+                status_t = solver_t.Solve(modelo_t)
+                viable = status_t != cp_model.INFEASIBLE
+                
+                # Liberar explícitamente memoria de los objetos protobuf de OR-Tools
+                del modelo_t
+                del solver_t
+                del turnos_t
+                del flr_t
+                del ctx_t
+                import gc
+                gc.collect()
+                
+                return viable
+                
+            ejecutar_diagnostico_hard(empleados, codigos_reglas, resolver_con_parametros)
 
     if df_resultados is None and not modo_debug and diagnose:
         print("Re-ejecutando modelo con assumptions activas para identificar conflicto...")

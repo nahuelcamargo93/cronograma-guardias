@@ -157,20 +157,43 @@ def apply(modelo, ctx) -> None:
     def crear_var_flr(emp, lunes, d_inicio, prefijo):
         dias_flr = [d_inicio, d_inicio + 1, d_inicio + 2, d_inicio + 3]
         for d_e in dias_flr:
-            if d_e < 0 or d_e >= ctx.dias:
+            if d_e >= ctx.dias:
                 return None
-            if d_e in emp.dias_licencia:
-                return None
+            if d_e >= 0:
+                if d_e in emp.dias_licencia:
+                    return None
+            else:
+                # d_e < 0 (mes anterior): si trabajó ese día, no es un bloque libre válido
+                fecha_d_str = (fecha_inicio_dt + timedelta(days=d_e)).isoformat()
+                hist_emp = ctx.historial_semana_previa.get(emp.nombre, []) if ctx.historial_semana_previa else []
+                trabajado_d = any(h['fecha'] == fecha_d_str and h.get('horas', 0) > 0 for h in hist_emp)
+                if trabajado_d:
+                    return None
 
         # Verificar si todos los días de este bloque libre de 4 días tienen franco forzado activo
         # (por ende, el bloque libre fue configurado explícitamente por el usuario)
         def _tiene_franco_forzado(d_idx):
+            if d_idx < 0 or d_idx >= ctx.dias:
+                return False
             fecha_d_str = (fecha_inicio_dt + timedelta(days=d_idx)).isoformat()
             p = _re.resolver_parametros_regla(
                 'FRANCO_FORZADO', emp.nombre, fecha_d_str,
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
             )
-            return _re.regla_existe(p) and not _re.regla_suspendida(p)
+            tiene_franco = _re.regla_existe(p) and not _re.regla_suspendida(p)
+
+            tiene_fija_fecha = False
+            params_fija = _re.resolver_parametros_regla(
+                'ASIGNACION_FIJA', emp.nombre, fecha_d_str,
+                ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+            )
+            if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                for asig in params_fija:
+                    if asig.get('Fecha') == fecha_d_str:
+                        tiene_fija_fecha = True
+                        break
+
+            return tiene_franco and not tiene_fija_fecha
 
         forzado_por_usuario = all(_tiene_franco_forzado(d_e) for d_e in dias_flr)
         
@@ -179,6 +202,8 @@ def apply(modelo, ctx) -> None:
         
         vars_bloque_flr = []
         for d_e in dias_flr:
+            if d_e < 0 or d_e >= ctx.dias:
+                continue
             es_f = is_finde(d_e, ctx.offset_dia, ctx.feriados)
             for t in ctx.demanda_turnos.get("Finde_Feriado" if es_f else "Semana", {}).keys():
                 if (emp.nombre, d_e, t) in ctx.turnos:
@@ -208,7 +233,17 @@ def apply(modelo, ctx) -> None:
             else:
                 flr_conds.append(modelo.NewConstant(0))
         else:
-            flr_conds.append(modelo.NewConstant(0))
+            # d_prev < 0 (pertenece al mes anterior)
+            fecha_prev_str = (fecha_inicio_dt + timedelta(days=d_prev)).isoformat()
+            hist_emp = ctx.historial_semana_previa.get(emp.nombre, []) if ctx.historial_semana_previa else []
+            trabajo_previo = any(h['fecha'] == fecha_prev_str and h.get('horas', 0) > 0 for h in hist_emp)
+            if trabajo_previo:
+                flr_conds.append(modelo.NewConstant(1))
+            else:
+                if ctx.historial_semana_previa:
+                    flr_conds.append(modelo.NewConstant(0))
+                else:
+                    flr_conds.append(modelo.NewConstant(1))
             
         d_post = d_inicio + 4
         if d_post < ctx.dias:
@@ -226,7 +261,7 @@ def apply(modelo, ctx) -> None:
             else:
                 flr_conds.append(modelo.NewConstant(0))
         else:
-            flr_conds.append(modelo.NewConstant(0))
+            flr_conds.append(modelo.NewConstant(1))
             
         modelo.AddBoolAnd(flr_conds).OnlyEnforceIf(var_bloque)
         modelo.AddBoolOr([v.Not() if hasattr(v, 'Not') else v == 0 for v in flr_conds]).OnlyEnforceIf(var_bloque.Not())
@@ -266,12 +301,25 @@ def apply(modelo, ctx) -> None:
         def _disponible(d_idx):
             if d_idx in emp.dias_licencia:
                 return False
+            fecha_d_str = (fecha_inicio_dt + timedelta(days=d_idx)).isoformat()
             p = _re.resolver_parametros_regla(
-                'FRANCO_FORZADO', emp.nombre,
-                (fecha_inicio_dt + timedelta(days=d_idx)).isoformat(),
+                'FRANCO_FORZADO', emp.nombre, fecha_d_str,
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
             )
-            return not (_re.regla_existe(p) and not _re.regla_suspendida(p))
+            tiene_franco = _re.regla_existe(p) and not _re.regla_suspendida(p)
+
+            tiene_fija_fecha = False
+            params_fija = _re.resolver_parametros_regla(
+                'ASIGNACION_FIJA', emp.nombre, fecha_d_str,
+                ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+            )
+            if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                for asig in params_fija:
+                    if asig.get('Fecha') == fecha_d_str:
+                        tiene_fija_fecha = True
+                        break
+
+            return not (tiene_franco and not tiene_fija_fecha)
 
         def _tiene_flr_forzado(lunes, dias_f):
             d_sat = next((d for d, w in dias_f if w == 5), None)
@@ -310,10 +358,23 @@ def apply(modelo, ctx) -> None:
                         'FRANCO_FORZADO', emp.nombre, fecha_d_str,
                         ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
                     )
-                    if not (_re.regla_existe(p) and not _re.regla_suspendida(p)):
+                    tiene_franco = _re.regla_existe(p) and not _re.regla_suspendida(p)
+
+                    tiene_fija_fecha = False
+                    params_fija = _re.resolver_parametros_regla(
+                        'ASIGNACION_FIJA', emp.nombre, fecha_d_str,
+                        ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+                    )
+                    if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                        for asig in params_fija:
+                            if asig.get('Fecha') == fecha_d_str:
+                                tiene_fija_fecha = True
+                                break
+
+                    if not (tiene_franco and not tiene_fija_fecha):
                         todos_con_franco = False
                         break
-                
+
                 if todos_con_franco:
                     return True
             return False

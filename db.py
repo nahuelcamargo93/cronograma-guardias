@@ -135,11 +135,30 @@ def migrar_db_a_codigo_regla(conn):
         conn.execute("ALTER TABLE personal_reglas_new RENAME TO personal_reglas")
         print("Migración de base de datos finalizada con éxito.")
 
+def migrar_db_solo_importacion(conn):
+    """Agrega la columna solo_importacion a la tabla turnos_config si no existe."""
+    try:
+        cur = conn.execute("PRAGMA table_info(turnos_config)")
+        columns = [row[1] for row in cur.fetchall()]
+        if columns and 'solo_importacion' not in columns:
+            print("Migrando turnos_config para agregar solo_importacion...")
+            conn.execute("ALTER TABLE turnos_config ADD COLUMN solo_importacion INTEGER DEFAULT 0")
+            print("Columna solo_importacion agregada con éxito.")
+        
+        # Actualizar FCG y TTN para que sean solo de importación y estén activos en Enfermería
+        conn.execute("""
+            UPDATE turnos_config 
+            SET solo_importacion = 1, activo = 1 
+            WHERE servicio_id = 2 AND nombre IN ('FCG', 'TTN')
+        """)
+    except sqlite3.OperationalError as e:
+        print(f"Error al verificar/migrar columna solo_importacion: {e}")
 
 def inicializar_db():
     """Crea las tablas si no existen. Seguro de llamar múltiples veces."""
     with get_connection() as conn:
         migrar_db_a_codigo_regla(conn)
+        migrar_db_solo_importacion(conn)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS organizaciones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -300,6 +319,7 @@ def inicializar_db():
                 dias_semana TEXT DEFAULT '0,1,2,3,4,5,6',
                 orden INTEGER DEFAULT 0,
                 activo INTEGER DEFAULT 1,
+                solo_importacion INTEGER DEFAULT 0,
                 UNIQUE(servicio_id, nombre)
             );
 
@@ -509,6 +529,8 @@ def inicializar_db():
                             "INSERT OR IGNORE INTO personal_puestos (personal_nombre, puesto_id) VALUES (?, ?)", 
                             (emp_nombre, p_id)
                         )
+                    else:
+                        print(f"⚠️ [MIGRACIÓN WARN] El rol '{p_nom}' para '{emp_nombre}' (Servicio {emp_serv}) no coincide con ningún puesto existente. La asignación automática de personal_puestos fue omitida.")
         except Exception as e:
             print(f"Error en migración automática de personal_puestos: {e}")
 
@@ -1176,7 +1198,8 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
     with get_connection() as conn:
         # 1. Cargar Oferta (Turnos Config) con Nombre del Puesto
         rows_turnos = conn.execute("""
-            SELECT tc.id, tc.nombre, tc.horas, tc.hora_inicio, tc.dias_semana, tc.puesto_id, p.nombre as puesto_nombre
+            SELECT tc.id, tc.nombre, tc.horas, tc.hora_inicio, tc.dias_semana, tc.puesto_id, p.nombre as puesto_nombre,
+                   COALESCE(tc.solo_importacion, 0) as solo_importacion
             FROM turnos_config tc
             LEFT JOIN puestos p ON tc.puesto_id = p.id
             WHERE tc.servicio_id = ? AND tc.activo = 1
@@ -1185,10 +1208,12 @@ def cargar_configuracion_turnos(servicio_id=1, fecha_inicio=None, fecha_fin=None
         
         config = { "Semana": {}, "Finde_Feriado": {}, "Metadata": {} }
         turnos_info = {}
-        for r_id, nombre, horas, h_ini, d_sem, p_id, p_nom in rows_turnos:
+        for r_id, nombre, horas, h_ini, d_sem, p_id, p_nom, solo_imp in rows_turnos:
             # Poblamos la estructura antigua para que main.py pueda crear las variables sin chillar
-            config["Semana"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
-            config["Finde_Feriado"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
+            # Excluimos de la oferta del solver si es de solo importacion
+            if not solo_imp:
+                config["Semana"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
+                config["Finde_Feriado"][nombre] = {"Horas": horas, "Dias_Habilitados": d_sem}
             config["Metadata"][nombre] = {"hora_inicio": h_ini, "puesto_id": p_id, "puesto_nombre": p_nom}
             
             turnos_info[nombre] = {
@@ -1267,6 +1292,60 @@ def cargar_ajustes_reglas_personal(fecha_inicio, fecha_fin):
             'accion':       accion,
             'params':       json.loads(params) if params else None
         })
+
+    # Cargar asignaciones fijas directamente de la tabla personal_asignaciones_fijas
+    with get_connection() as conn:
+        rows_fijas = conn.execute("""
+            SELECT personal_nombre, fecha, dia_semana, turno
+            FROM personal_asignaciones_fijas
+            WHERE activo = 1 AND (
+                (fecha IS NOT NULL AND fecha BETWEEN ? AND ?) OR
+                (dia_semana IS NOT NULL)
+            )
+        """, (fecha_inicio, fecha_fin)).fetchall()
+
+    def _norm_dia(d):
+        if not d: return d
+        d = d.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        d = d.replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+        return d
+
+    for nombre, fec, dia_sem, turno in rows_fijas:
+        if fec:
+            resultado.setdefault(nombre, []).append({
+                'codigo_regla': 'ASIGNACION_FIJA',
+                'fecha_inicio': fec,
+                'fecha_fin':    fec,
+                'accion':       'SOBRESCRIBIR',
+                'params':       [{'Fecha': fec, 'Turno': turno}]
+            })
+        elif dia_sem:
+            dia_sem_norm = _norm_dia(dia_sem)
+            resultado.setdefault(nombre, []).append({
+                'codigo_regla': 'ASIGNACION_FIJA',
+                'fecha_inicio': fecha_inicio,
+                'fecha_fin':    fecha_fin,
+                'accion':       'SOBRESCRIBIR',
+                'params':       [{'Dia': dia_sem_norm, 'Turno': turno}]
+            })
+
+    # Cargar francos forzados directamente de la tabla personal_francos_forzados
+    with get_connection() as conn:
+        rows_francos = conn.execute("""
+            SELECT personal_nombre, fecha_inicio, fecha_fin
+            FROM personal_francos_forzados
+            WHERE activo = 1 AND NOT (fecha_fin < ? OR fecha_inicio > ?)
+        """, (fecha_inicio, fecha_fin)).fetchall()
+
+    for nombre, fi, ff in rows_francos:
+        resultado.setdefault(nombre, []).append({
+            'codigo_regla': 'FRANCO_FORZADO',
+            'fecha_inicio': fi,
+            'fecha_fin':    ff,
+            'accion':       'SOBRESCRIBIR',
+            'params':       {}
+        })
+
     return resultado
 
 

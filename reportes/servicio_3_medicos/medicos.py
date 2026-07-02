@@ -5,14 +5,16 @@ from reportes.generales.base import BaseReport
 
 def asignar_horas_med(t):
     tipo = str(t).split('_')[0]
-    if tipo == 'G': return 24
-    if tipo in ['D', 'N']: return 12
+    if tipo in ['G', 'Guardia']: return 24
+    if tipo in ['D', 'N', 'Dia', 'Día', 'Noche']: return 12
     return 0
 
 def get_abreviacion(turno):
     mapping = {
         "D_Planta": "D_P", "N_Planta": "N_P", "G_Planta": "G_P",
-        "D_Residente": "D_R", "N_Residente": "N_R", "G_Residente": "G_R"
+        "D_Residente": "D_R", "N_Residente": "N_R", "G_Residente": "G_R",
+        "Dia_Planta": "D_P", "Noche_Planta": "N_P", "Guardia_Planta": "G_P",
+        "Dia_Residente": "D_R", "Noche_Residente": "N_R", "Guardia_Residente": "G_R"
     }
     return mapping.get(turno, turno)
 
@@ -48,7 +50,6 @@ def exportar_excel_data_prep(df_resultados, df_personal):
         for i in range(max(1, max_p)):
             fila = {"Turno": t_label}
             for f in fechas_unicas:
-                # Corregido: Usar 'Personal' en lugar de 'Kinesiologo' si existe
                 col_nombre = 'Kinesiologo' if 'Kinesiologo' in df_t.columns else 'Personal'
                 pers = df_t[df_t['Fecha'] == f].sort_values(by=col_nombre)[col_nombre].tolist()
                 nombre_comp = pers[i] if i < len(pers) else ""
@@ -144,7 +145,7 @@ def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=Non
                     fila[fecha] = "F"
         fs_trabajados = len(fs_semanas_trabajadas)
         
-        # 1. Calcular FS Disponibles (semanas sin licencia en todos los días del fin de semana)
+        # 1. FS Disponibles
         findes = {}
         if fechas:
             for f in fechas:
@@ -164,7 +165,7 @@ def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=Non
         
         fs_disponibles = sum(1 for lunes, dias in findes.items() if any(d not in lic_days for d in dias))
         
-        # 2. Calcular FSL3 y FSL4 Trabajados para FS Totales
+        # 2. FSL3 y FSL4 Trabajados
         fsl3_trabajados = 0
         fsl4_trabajados = 0
         for b in bloques:
@@ -182,7 +183,7 @@ def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=Non
                     
         fs_totales = fs_trabajados + fsl3_trabajados + fsl4_trabajados
         
-        # 3. Calcular Viernes Trabajados
+        # 3. Viernes Trabajados
         viernes_trabajados = 0
         for f in fechas:
             dt = date.fromisoformat(f)
@@ -193,7 +194,6 @@ def exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados=Non
         
         h_tot_calc = h_efectivas + h_licencia
         h_reg_mensual = df_personal[df_personal['Nombre'] == nombre]['horas_mensuales_reglamentarias'].iloc[0] or 144
-        # Prorratear por días reales del bloque (si se conoce), default 30 días
         _dias_bloque = dias_del_bloque if dias_del_bloque and dias_del_bloque > 0 else 30
         h_obj = round(h_reg_mensual * _dias_bloque / 30.0, 1)
         guardias = h_efectivas / 24.0
@@ -259,7 +259,6 @@ def calcular_resumen_medicos(df_resultados, df_personal, dias_del_bloque, feriad
         h_efectivas = 0
         h_licencia = 0
         fs_semanas_trabajadas = set()
-        # Iterar sobre las fechas del período actual
         for d in range(dias_del_bloque):
             fecha_d = (date.fromisoformat(fecha_inicio) + timedelta(days=d)).isoformat()
             asig = df_resultados[(df_resultados[col_nombre] == nombre) & (df_resultados['Fecha'] == fecha_d)]
@@ -299,12 +298,12 @@ def calcular_resumen_medicos(df_resultados, df_personal, dias_del_bloque, feriad
                 elif len(b) >= 4:
                     fsl4_trabajados += 1
                     
-        # a. Horas reglamentarias (prorrateadas por días reales del bloque)
+        # a. Horas reglamentarias
         h_reg_mensual = p.get('horas_mensuales_reglamentarias', 144) or 144
         h_reg = round(h_reg_mensual * dias_del_bloque / 30.0, 1)
         
-        # b. Límite de carga / Horas posibles totales para extra posibles
-        max_horas = 192  # default
+        # b. Límite de carga
+        max_horas = 192
         for a in ajustes_reglas.get(nombre, []):
             if a['codigo_regla'] == 'MAX_HORAS_MES_CALENDARIO' and a['accion'] == 'SOBRESCRIBIR':
                 if a['params'] and 'max_horas' in a['params']:
@@ -312,16 +311,16 @@ def calcular_resumen_medicos(df_resultados, df_personal, dias_del_bloque, feriad
                     
         h_extra_posibles = (max_horas - h_reg) / 24.0
         
-        # c. Horas totales del período actual (trabajadas + licencia)
+        # c. Horas totales del período actual
         h_tot_calc = h_efectivas + h_licencia
         
-        # d. Guardias extras realizadas en el período
+        # d. Guardias extras realizadas
         extras_realizadas = (h_tot_calc - h_reg) / 24.0
         
-        # --- CUMULATIVE / HISTORICAL ---
+        # --- CUMULATIVE ---
         h_tot_acumulada = p.get('horas_anuales_previas', 0) + h_efectivas
         
-        # Horas Posibles Histórico (pro-rata pro-meses pasados y bloque actual)
+        # Horas Posibles Histórico
         f_ini_hist = p.get('fecha_inicio_historial')
         if f_ini_hist:
             dt_ini_hist = pd.to_datetime(f_ini_hist)
@@ -341,7 +340,7 @@ def calcular_resumen_medicos(df_resultados, df_personal, dias_del_bloque, feriad
                 if inter_ini <= inter_fin:
                     dias_lic += (inter_fin - inter_ini).days + 1
                     
-        # Pro-rata del bloque actual: (Horas / dias_del_bloque) * (dias_del_bloque - dias_lic)
+        # Pro-rata del bloque actual
         h_posibles_bloque = (h_reg_mensual / 30.0) * (dias_del_bloque - dias_lic)
         if h_posibles_bloque < 0: h_posibles_bloque = 0
         
@@ -354,7 +353,6 @@ def calcular_resumen_medicos(df_resultados, df_personal, dias_del_bloque, feriad
         
         resumen.append({
             'Personal': nombre,
-            # Período actual (nuevas columnas)
             'Horas reglamentarias': int(h_reg),
             'Guardias extra posibles': round(h_extra_posibles, 1),
             'Horas totales (trabajadas + licencia)': int(h_tot_calc + 0.5),
@@ -362,7 +360,6 @@ def calcular_resumen_medicos(df_resultados, df_personal, dias_del_bloque, feriad
             'FS trabajados': int(fs_trabajados),
             'FSL3 trabajados': int(fsl3_trabajados),
             'FSL4 trabajados': int(fsl4_trabajados),
-            # Acumulado / Resumen (columnas estándar)
             'Horas Totales': int(h_tot_acumulada + 0.5),
             'Horas Posibles': int(h_posibles_acumuladas + 0.5),
             'Carga Horaria': f"{round(carga, 1)}%",
@@ -379,8 +376,8 @@ def generar_reporte_horas(df_resultados):
     
     def asignar_horas_med(t):
         tipo = str(t).split('_')[0]
-        if tipo == 'G': return 24
-        if tipo in ['D', 'N']: return 12
+        if tipo in ['G', 'Guardia']: return 24
+        if tipo in ['D', 'N', 'Dia', 'Día', 'Noche']: return 12
         return 0
         
     df_reporte_horas['Horas'] = df_reporte_horas['Turno'].apply(asignar_horas_med)
@@ -392,17 +389,108 @@ def exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_person
     report = BaseReport(file_name, feriados=feriados, fecha_inicio=fecha_inicio, crono_id=crono_id, servicio_id=3)
     
     # 1. Cronograma
-    ws_c = report.generar_cronograma_sheet(df_pivot, fechas_unicas)
-    if crono_id is not None:
-        row_c = len(df_pivot) + 3
-        ws_c.write(row_c, 0, "ID Cronograma:", report.styles.total_label)
-        ws_c.write(row_c, 1, crono_id, report.styles.total_val)
+    ws_c = report.generar_cronograma_semanal_sheet(df_pivot, fechas_unicas, df_resultados, df_personal)
     
     # 2. Vista por Personal
-    ext_cols = ["Horas Ef.", "Horas Lic.", "Horas Tot.", "Guardias", "FS Disponibles", "FS trabajados", "Viernes trabajados"]
-    ws_p, row_end = report.generar_vista_personal_sheet(df_persona, fechas_unicas, extension_columns=ext_cols, label_personal="MÉDICO")
+    from datetime import date, timedelta
+    from database.queries import obtener_feriados
+    from reportes.generales.base import col_to_letter
     
-    # --- TOTALES POR ROL (Específico de médicos) ---
+    FERIADOS = obtener_feriados(servicio_id=3)
+    
+    # Calcular bloques de descanso y viernes para fórmulas dinámicas
+    bloques = []
+    if fechas_unicas:
+        fecha_inicio_dt = date.fromisoformat(fechas_unicas[0])
+        fecha_fin_dt = date.fromisoformat(fechas_unicas[-1])
+        total_dias = (fecha_fin_dt - fecha_inicio_dt).days + 1
+        
+        es_descanso = []
+        for d in range(total_dias):
+            f_str = (fecha_inicio_dt + timedelta(days=d)).isoformat()
+            dt = fecha_inicio_dt + timedelta(days=d)
+            es_f = dt.weekday() >= 5 or f_str in FERIADOS
+            es_descanso.append(es_f)
+            
+        b_act = []
+        for d in range(total_dias):
+            if es_descanso[d]:
+                b_act.append((fecha_inicio_dt + timedelta(days=d)).isoformat())
+            else:
+                if b_act:
+                    bloques.append(b_act)
+                    b_act = []
+        if b_act:
+            bloques.append(b_act)
+
+    # Identificar viernes y construir condiciones
+    columnas_viernes = []
+    for col_idx, fecha in enumerate(fechas_unicas):
+        dt = date.fromisoformat(fecha)
+        if dt.weekday() == 4: # Viernes
+            col_letter = col_to_letter(col_idx + 1) # +1 porque col 0 es Personal
+            columnas_viernes.append(col_letter)
+            
+    turnos_trabajo = ["G_P", "G_R", "D_P", "D_R", "N_P", "N_R"]
+    partes_viernes = []
+    for col_let in columnas_viernes:
+        condiciones = ", ".join([f"{col_let}{{row}}=\"{t}\"" for t in turnos_trabajo])
+        partes_viernes.append(f"OR({condiciones})*1")
+    
+    formula_viernes = "=" + " + ".join(partes_viernes) if partes_viernes else "=0"
+    
+    # Fines de semana trabajados (al menos 1 día de trabajo en el bloque)
+    partes_bloques = []
+    for b in bloques:
+        condiciones_bloque = []
+        for fecha in b:
+            if fecha in fechas_unicas:
+                col_idx = fechas_unicas.index(fecha)
+                col_let = col_to_letter(col_idx + 1)
+                for t in turnos_trabajo:
+                    condiciones_bloque.append(f"{col_let}{{row}}=\"{t}\"")
+        if condiciones_bloque:
+            conds_str = ", ".join(condiciones_bloque)
+            partes_bloques.append(f"OR({conds_str})*1")
+            
+    formula_fs_trabajados = "=" + " + ".join(partes_bloques) if partes_bloques else "=0"
+    
+    # Fines de semana disponibles (al menos 1 día sin licencia en el bloque)
+    licencias_list = ["LAR", "LPP", "LM", "CM"]
+    partes_disponibles = []
+    for b in bloques:
+        condiciones_dias_disponibles = []
+        for fecha in b:
+            if fecha in fechas_unicas:
+                col_idx = fechas_unicas.index(fecha)
+                col_let = col_to_letter(col_idx + 1)
+                conds_dia = ", ".join([f'{col_let}{{row}}<>"{lic}"' for lic in licencias_list])
+                condiciones_dias_disponibles.append(f"AND({conds_dia})")
+        if condiciones_dias_disponibles:
+            conds_str = ", ".join(condiciones_dias_disponibles)
+            partes_disponibles.append(f"OR({conds_str})*1")
+            
+    formula_fs_disponibles = "=" + " + ".join(partes_disponibles) if partes_disponibles else "=0"
+
+    # Rango de columnas de fechas para COUNTIF
+    col_inicio_dias = "B"
+    col_fin_dias = col_to_letter(len(fechas_unicas))
+    rango_dias = f"{col_inicio_dias}{{row}}:{col_fin_dias}{{row}}"
+    
+    formulas_vista = {
+        "Horas Ef.": f"=(COUNTIF({rango_dias}, \"G_P\") + COUNTIF({rango_dias}, \"G_R\"))*24 + (COUNTIF({rango_dias}, \"D_P\") + COUNTIF({rango_dias}, \"D_R\") + COUNTIF({rango_dias}, \"N_P\") + COUNTIF({rango_dias}, \"N_R\"))*12",
+        "Horas Lic.": f"=ROUND((COUNTIF({rango_dias}, \"LAR\") + COUNTIF({rango_dias}, \"LPP\") + COUNTIF({rango_dias}, \"LM\") + COUNTIF({rango_dias}, \"CM\")) * 36 / 7, 0)",
+        "Horas Tot.": "={Horas_Ef}{row} + {Horas_Lic}{row}",
+        "Guardias": "={Horas_Ef}{row} / 24",
+        "FS Disponibles": formula_fs_disponibles,
+        "FS trabajados": formula_fs_trabajados,
+        "Viernes trabajados": formula_viernes
+    }
+    
+    ext_cols = ["Horas Ef.", "Horas Lic.", "Horas Tot.", "Guardias", "FS Disponibles", "FS trabajados", "Viernes trabajados"]
+    ws_p, row_end = report.generar_vista_personal_sheet(df_persona, fechas_unicas, extension_columns=ext_cols, label_personal="MÉDICO", formulas=formulas_vista)
+    
+    # --- TOTALES POR ROL ---
     row_end += 1
     rol_map = df_personal.set_index('Nombre')['Rol'].to_dict()
     categorias = [
@@ -453,7 +541,7 @@ def exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_person
         ws_p.write(row_end, 0, "ID Cronograma:", report.styles.total_label)
         ws_p.write(row_end, 1, crono_id, report.styles.total_val)
 
-    # 3. Reporte de Horas (Customizado para médicos)
+    # 3. Reporte de Horas
     df_reporte = calcular_resumen_medicos(df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia)
     ws_r = report.generar_reporte_resumen_sheet(df_reporte)
     
@@ -497,5 +585,3 @@ def generar_y_exportar(df_resultados, df_personal, dias_del_bloque, feriados, fe
     df_pivot, fechas_unicas = exportar_excel_data_prep(df_resultados, df_personal)
     df_persona = exportar_excel_vista_personal(df_resultados, df_personal, flrs_asignados, dias_del_bloque=dias_del_bloque)
     exportar_excel(df_pivot, df_persona, fechas_unicas, df_resultados, df_personal, dias_del_bloque, feriados, fecha_inicio, offset_dia, file_name=file_name, crono_id=crono_id)
-
-

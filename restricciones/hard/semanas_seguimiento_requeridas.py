@@ -29,7 +29,8 @@ def apply(modelo, ctx) -> None:
         if not isinstance(params, dict):
             continue
 
-        # Función para verificar disponibilidad del día (no es licencia y no tiene franco forzado)
+        # Función para verificar disponibilidad del día (no es licencia y no tiene franco forzado,
+        # a menos que el franco forzado sea anulado por una asignación fija por fecha)
         def _disponible(d_idx):
             if d_idx in emp.dias_licencia:
                 return False
@@ -38,7 +39,22 @@ def apply(modelo, ctx) -> None:
                 'FRANCO_FORZADO', emp.nombre, fecha_str,
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
             )
-            return not (_re.regla_existe(p) and not _re.regla_suspendida(p))
+            tiene_franco = _re.regla_existe(p) and not _re.regla_suspendida(p)
+
+            tiene_fija_fecha = False
+            params_fija = _re.resolver_parametros_regla(
+                'ASIGNACION_FIJA', emp.nombre, fecha_str,
+                ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+            )
+            if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                for asig in params_fija:
+                    if asig.get('Fecha') == fecha_str:
+                        tiene_fija_fecha = True
+                        break
+
+            if tiene_franco and not tiene_fija_fecha:
+                return False
+            return True
 
         # Calcular semanas disponibles
         semanas_disponibles = 0

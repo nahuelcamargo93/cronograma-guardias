@@ -20,10 +20,14 @@ def asignar_horas_base(turno):
         pass
 
     if turno.startswith("Noche") or turno.startswith("Dia"):
-        return 12
-    if "24" in turno and "-" not in turno:
-        return 12
-    return 6
+        horas_val = 12
+    elif "24" in turno and "-" not in turno:
+        horas_val = 12
+    else:
+        horas_val = 6
+
+    print(f"⚠️ [REPORTE] Advertencia: El turno '{turno}' no se encontró en 'turnos_config' o falló la consulta a la BD. Usando fallback heurístico de {horas_val} horas. Verifique la base de datos.")
+    return horas_val
 
 def calcular_resumen_estandar(df_resultados, df_personal, dias_del_bloque, feriados_indices, fecha_inicio, offset_dia, func_horas=None):
     if func_horas is None: func_horas = asignar_horas_base
@@ -246,6 +250,8 @@ class BaseReport:
     def __init__(self, file_name, feriados=None, fecha_inicio=None, crono_id=None, servicio_id=None):
         self.crono_id = crono_id
         self.servicio_id = servicio_id
+        self.fecha_inicio = fecha_inicio
+        self.cronograma_celdas = {}
         
         tiene_infracciones = False
         if crono_id is not None:
@@ -313,12 +319,12 @@ class BaseReport:
         dt = date.fromisoformat(fecha_str)
         return dt.weekday() == 6
 
-    def escribir_cabeceras_calendario(self, ws, fechas_unicas, start_col=1, col_width=12):
+    def escribir_cabeceras_calendario(self, ws, fechas_unicas, start_col=1, col_width=12, start_row=0, use_day_only=False):
         """Escribe las dos filas de cabecera (Día Sigla y Fecha)."""
         for col_idx, fecha in enumerate(fechas_unicas):
             dt = date.fromisoformat(fecha)
             sigla = self.siglas_dias[dt.weekday()]
-            dia_num = f"{dt.day}/{dt.month}"
+            dia_num = str(dt.day) if use_day_only else f"{dt.day}/{dt.month}"
             
             is_sep = (dt.weekday() == 6)
             is_weekend = (dt.weekday() >= 5)
@@ -332,8 +338,8 @@ class BaseReport:
                 fmt_h1 = self.styles.header_blue_week if is_sep else self.styles.header_blue
                 fmt_h2 = self.styles.header_light_week if is_sep else self.styles.header_light
 
-            ws.write(0, start_col + col_idx, sigla, fmt_h1)
-            ws.write(1, start_col + col_idx, dia_num, fmt_h2)
+            ws.write(start_row, start_col + col_idx, sigla, fmt_h1)
+            ws.write(start_row + 1, start_col + col_idx, dia_num, fmt_h2)
             ws.set_column(start_col + col_idx, start_col + col_idx, col_width)
 
     def generar_cronograma_sheet(self, df_pivot, fechas_unicas, sheet_name='Cronograma'):
@@ -364,11 +370,11 @@ class BaseReport:
                     turno_mostrar = "Noche"
             elif self.servicio_id == 3:
                 turno_lower = str(turno_label).lower()
-                if turno_lower.startswith("d_"):
+                if turno_lower.startswith("d_") or turno_lower.startswith("dia"):
                     turno_mostrar = "Día"
-                elif turno_lower.startswith("g_"):
+                elif turno_lower.startswith("g_") or turno_lower.startswith("guardia"):
                     turno_mostrar = "Guardia"
-                elif turno_lower.startswith("n_"):
+                elif turno_lower.startswith("n_") or turno_lower.startswith("noche"):
                     turno_mostrar = "Noche"
             
             filas_info.append({
@@ -417,22 +423,28 @@ class BaseReport:
                 else:
                     if self.servicio_id in [1, 3]:
                         if self.servicio_id == 1:
-                            # Colores personalizados para Kinesiología (rosita/rojo claro para UCO, verde para UTI, amarillo para especiales, violeta para noche)
+                            # Colores personalizados para Kinesiología
                             turno_lower = str(turno_label).lower()
                             if "uco" in turno_lower:
-                                color = '#FADBD8' # Rosita/Rojo clarito
+                                color = '#FADBD8'
                             elif "uti" in turno_lower:
-                                color = '#D5F5E3' # Verde clarito
+                                color = '#D5F5E3'
                             elif "especial" in turno_lower:
-                                color = '#FCF3CF' # Amarillo clarito
+                                color = '#FCF3CF'
                             elif "noche" in turno_lower:
-                                color = '#EBDEF0' # Violeta clarito
+                                color = '#EBDEF0'
                             else:
                                 color = '#FFFFFF'
                         else:
                             # servicio_id == 3
                             base_turno = turno_label.split('_')[0]
-                            color = self.styles.shift_colors.get(base_turno, '#FFFFFF')
+                            base_turno_map = {
+                                "Dia": "D", "Día": "D",
+                                "Noche": "N",
+                                "Guardia": "G"
+                            }
+                            base_letra = base_turno_map.get(base_turno, base_turno)
+                            color = self.styles.shift_colors.get(base_letra, '#FFFFFF')
                         
                         fmt_dict = {'bg_color': color, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 9, 'text_wrap': True}
                         if is_sep:
@@ -515,32 +527,336 @@ class BaseReport:
                 
         return ws
 
-    def generar_vista_personal_sheet(self, df_persona, fechas_unicas, extension_columns=None, label_personal="PERSONAL", sheet_name='Vista por Personal', renombrar_francos=False, formulas=None):
+    def generar_cronograma_semanal_sheet(self, df_pivot, fechas_unicas, df_resultados, df_personal, sheet_name='Cronograma'):
         ws = self.workbook.add_worksheet(sheet_name)
-        ws.freeze_panes(2, 1) # Inmovilizar 2 filas y 1 columna
+        ws.freeze_panes(1, 1) # Inmovilizar 1 fila y 1 columna
+        ws.set_column(0, 0, 15)
+        # Columnas de Lunes a Domingo
+        for col in range(1, 8):
+            ws.set_column(col, col, 15)
+            
+        def solo_apellido(nombre_completo):
+            if not nombre_completo:
+                return ""
+            lineas = str(nombre_completo).split('\n')
+            apellidos = []
+            for linea in lineas:
+                if not linea.strip():
+                    continue
+                parte_apellido = linea.split(',')[0].strip()
+                if parte_apellido.lower() == "navarro suarez":
+                    apellidos.append("Suarez")
+                else:
+                    primer_ap = parte_apellido.split(' ')[0].strip()
+                    apellidos.append(primer_ap)
+            return "\n".join(apellidos)
+            
+        nombres_personal = df_personal['Nombre'].tolist()
+        apellidos_validos = sorted(list(set([solo_apellido(n) for n in nombres_personal if n])))
+            
+        # Determinar el rango total de semanas
+        import pandas as pd
+        from datetime import datetime, timedelta
+        
+        fecha_inicio_dt = datetime.strptime(fechas_unicas[0], "%Y-%m-%d")
+        fecha_fin_dt = datetime.strptime(fechas_unicas[-1], "%Y-%m-%d")
+        
+        offset_start = fecha_inicio_dt.weekday() # 0 = Lunes, 6 = Domingo
+        lunes_inicio_dt = fecha_inicio_dt - timedelta(days=offset_start)
+        
+        offset_end = 6 - fecha_fin_dt.weekday()
+        domingo_fin_dt = fecha_fin_dt + timedelta(days=offset_end)
+        
+        # Generar bloques semanales
+        semanas = []
+        curr_lunes = lunes_inicio_dt
+        while curr_lunes <= domingo_fin_dt:
+            semanas.append(curr_lunes)
+            curr_lunes += timedelta(days=7)
+            
+        # 1. Fila 0: Fija con las siglas de los días (Lunes a Domingo)
+        ws.write(0, 0, "TURNO", self.styles.header_blue)
+        for i in range(7):
+            sigla = self.siglas_dias[i]
+            is_sep = (i == 6)
+            fmt_h1 = self.styles.header_blue_week if is_sep else self.styles.header_blue
+            ws.write(0, i + 1, sigla, fmt_h1)
+            
+        row_curr = 1
+        grupos_turno = [
+            ("Día", ["Dia_Planta", "Dia_Residente"]),
+            ("Guardia", ["Guardia_Planta", "Guardia_Residente"]),
+            ("Noche", ["Noche_Planta", "Noche_Residente"])
+        ]
+        
+        for sem_idx, lunes_dt in enumerate(semanas):
+            # Fila de fechas del bloque semanal (Semana X y fechas d/m)
+            ws.write(row_curr, 0, f"Semana {sem_idx + 1}", self.styles.header_light)
+            
+            dias_semana_fechas = []
+            for i in range(7):
+                dia_dt = lunes_dt + timedelta(days=i)
+                fecha_str = dia_dt.strftime("%Y-%m-%d")
+                dias_semana_fechas.append((i + 1, fecha_str, dia_dt))
+                
+                dia_num = f"{dia_dt.day}/{dia_dt.month}"
+                is_sep = (i == 6)
+                is_weekend = (dia_dt.weekday() >= 5)
+                is_holiday = (fecha_str in self.feriados)
+                is_dark = is_weekend or is_holiday
+                
+                if is_dark:
+                    fmt_h2 = self.styles.header_dark_light_week if is_sep else self.styles.header_dark_light
+                else:
+                    fmt_h2 = self.styles.header_light_week if is_sep else self.styles.header_light
+                    
+                ws.write(row_curr, i + 1, dia_num, fmt_h2)
+                
+            row_curr += 1
+            
+            # Escribir filas de datos
+            for grupo_nombre, turnos_grupo in grupos_turno:
+                # Mapear color default del grupo
+                if grupo_nombre == "Día":
+                    color_default = '#EBF1DE' # Verde
+                elif grupo_nombre == "Guardia":
+                    color_default = '#FFF2CC' # Amarillo/Oro
+                else:
+                    color_default = '#E5E0EC' # Púrpura
+                    
+                # Guardar las asignaciones separadas por sub-turno
+                sub_turnos_asig = {} # turno_exacto -> col_idx -> list
+                max_filas_sub = {} # turno_exacto -> int
+                
+                for t_exacto in turnos_grupo:
+                    sub_turnos_asig[t_exacto] = {}
+                    max_filas_sub[t_exacto] = 0
+                    
+                    for col_idx, fecha_str, dia_dt in dias_semana_fechas:
+                        sub_turnos_asig[t_exacto][col_idx] = []
+                        if fechas_unicas[0] <= fecha_str <= fechas_unicas[-1]:
+                            df_dia = df_resultados[df_resultados['Fecha'] == fecha_str]
+                            df_t = df_dia[df_dia['Turno'] == t_exacto]
+                            
+                            col_nombre = 'Personal' if 'Personal' in df_t.columns else ('Kinesiologo' if 'Kinesiologo' in df_t.columns else '')
+                            if col_nombre:
+                                df_t = df_t.sort_values(by=col_nombre)
+                                for _, r_res in df_t.iterrows():
+                                    name_val = r_res[col_nombre]
+                                    sub_turnos_asig[t_exacto][col_idx].append({
+                                        'nombre': name_val,
+                                        'apellido': solo_apellido(name_val),
+                                        'turno_exacto': t_exacto
+                                    })
+                                    
+                        if len(sub_turnos_asig[t_exacto][col_idx]) > max_filas_sub[t_exacto]:
+                            max_filas_sub[t_exacto] = len(sub_turnos_asig[t_exacto][col_idx])
+                            
+                    # Asegurar al menos 1 fila si no hay asignaciones para que la grilla exista pintada
+                    if max_filas_sub[t_exacto] == 0:
+                        max_filas_sub[t_exacto] = 1
+                        
+                start_row_grupo = row_curr
+                
+                # Escribir las filas segregadas por sub-turno
+                for t_idx, t_exacto in enumerate(turnos_grupo):
+                    cant_filas = max_filas_sub[t_exacto]
+                    for r_idx in range(cant_filas):
+                        ws.set_row(row_curr, 16)
+                        for col_idx, fecha_str, dia_dt in dias_semana_fechas:
+                            is_sep = (col_idx == 7)
+                            
+                            # Determinar si es primera/última fila del bloque del turno
+                            es_primera_fila = (t_idx == 0 and r_idx == 0)
+                            es_ultimo_sub = (t_idx == len(turnos_grupo) - 1)
+                            es_ultima_fila = es_ultimo_sub and (r_idx == cant_filas - 1)
+                            
+                            top_border = 1
+                            top_color = '#000000' if es_primera_fila else '#D9D9D9'
+                            
+                            bottom_border = 5 if es_ultima_fila else 1
+                            bottom_color = '#000000' if es_ultima_fila else '#D9D9D9'
+                            
+                            left_border = 1
+                            left_color = '#000000' if col_idx == 1 else '#D9D9D9'
+                            
+                            right_border = 5 if is_sep else 1
+                            right_color = '#000000' if is_sep else '#D9D9D9'
+                            
+                            # Si cae fuera del rango real
+                            if not (fechas_unicas[0] <= fecha_str <= fechas_unicas[-1]):
+                                fmt = self.workbook.add_format({
+                                    'bg_color': '#D9D9D9',
+                                    'top': top_border, 'top_color': top_color,
+                                    'bottom': bottom_border, 'bottom_color': bottom_color,
+                                    'left': left_border, 'left_color': left_color,
+                                    'right': right_border, 'right_color': right_color
+                                })
+                                ws.write(row_curr, col_idx, "", fmt)
+                                continue
+                                
+                            # Registrar celda para médicos (servicio_id == 3)
+                            if self.servicio_id == 3:
+                                col_letter = col_to_letter(col_idx)
+                                ref_celda = f"'{sheet_name}'!${col_letter}${row_curr + 1}"
+                                self.cronograma_celdas.setdefault(fecha_str, []).append((t_exacto, ref_celda))
+
+                            # Si cae dentro
+                            lista_asig = sub_turnos_asig[t_exacto][col_idx]
+                            if r_idx < len(lista_asig):
+                                asig = lista_asig[r_idx]
+                                val = asig['apellido']
+                                color = color_default
+                            else:
+                                val = ""
+                                color = color_default
+                                
+                            fmt_dict = {
+                                'bg_color': color,
+                                'top': top_border, 'top_color': top_color,
+                                'bottom': bottom_border, 'bottom_color': bottom_color,
+                                'left': left_border, 'left_color': left_color,
+                                'right': right_border, 'right_color': right_color,
+                                'align': 'center',
+                                'valign': 'vcenter',
+                                'font_size': 9,
+                                'text_wrap': True
+                            }
+                            
+                            fmt = self.workbook.add_format(fmt_dict)
+                            ws.write(row_curr, col_idx, val, fmt)
+                            
+                            # Validar que solo se puedan colocar apellidos mediante menú desplegable
+                            ws.data_validation(row_curr, col_idx, row_curr, col_idx, {
+                                'validate': 'list',
+                                'source': apellidos_validos,
+                                'input_title': 'Seleccionar Médico',
+                                'input_message': 'Elegí un médico de la lista.',
+                                'error_title': 'Médico Inválido',
+                                'error_message': 'El apellido ingresado no corresponde a un médico activo.'
+                            })
+                            
+                        row_curr += 1
+                        
+                end_row_grupo = row_curr - 1
+                
+                # Escribir y unificar columna 0 ("TURNO")
+                fmt_dict_col0 = {
+                    'bold': True,
+                    'bg_color': '#BDD7EE',
+                    'border': 1,
+                    'align': 'center',
+                    'valign': 'vcenter',
+                    'bottom': 5
+                }
+                fmt_col0 = self.workbook.add_format(fmt_dict_col0)
+                
+                if start_row_grupo < end_row_grupo:
+                    ws.merge_range(start_row_grupo, 0, end_row_grupo, 0, grupo_nombre, fmt_col0)
+                else:
+                    ws.write(start_row_grupo, 0, grupo_nombre, fmt_col0)
+                    
+            # Separador entre semanas (dejar 1 fila vacía)
+            ws.set_row(row_curr, 15)
+            for c in range(8):
+                ws.write(row_curr, c, "", self.workbook.add_format({'bg_color': '#FFFFFF', 'border': 0}))
+            row_curr += 1
+            
+        if self.crono_id is not None:
+            ws.write(row_curr, 0, "ID Cronograma:", self.styles.total_label)
+            ws.write(row_curr, 1, self.crono_id, self.styles.total_val)
+            
+        return ws
+
+    def generar_vista_personal_sheet(self, df_persona, fechas_unicas, extension_columns=None, label_personal="PERSONAL", sheet_name='Vista por Personal', renombrar_francos=False, formulas=None):
+        def solo_apellido(nombre_completo):
+            if not nombre_completo:
+                return ""
+            lineas = str(nombre_completo).split('\n')
+            apellidos = []
+            for linea in lineas:
+                if not linea.strip():
+                    continue
+                parte_apellido = linea.split(',')[0].strip()
+                if parte_apellido.lower() == "navarro suarez":
+                    apellidos.append("Suarez")
+                else:
+                    primer_ap = parte_apellido.split(' ')[0].strip()
+                    apellidos.append(primer_ap)
+            return "\n".join(apellidos)
+
+        def get_abreviacion(turno):
+            mapping = {
+                "D_Planta": "D_P", "N_Planta": "N_P", "G_Planta": "G_P",
+                "D_Residente": "D_R", "N_Residente": "N_R", "G_Residente": "G_R",
+                "Dia_Planta": "D_P", "Noche_Planta": "N_P", "Guardia_Planta": "G_P",
+                "Dia_Residente": "D_R", "Noche_Residente": "N_R", "Guardia_Residente": "G_R"
+            }
+            return mapping.get(turno, turno)
+
+        ws = self.workbook.add_worksheet(sheet_name)
+        es_enfermeria_vista_personal = (self.servicio_id == 2 and sheet_name == 'Vista Personal')
+        if es_enfermeria_vista_personal:
+            ws.freeze_panes(5, 1) # Inmovilizar 5 filas y 1 columna
+        else:
+            ws.freeze_panes(2, 1) # Inmovilizar 2 filas y 1 columna
         
         end_col_letter = col_to_letter(len(fechas_unicas))
-
-        # Cabecera Lateral
-        ws.merge_range(0, 0, 1, 0, label_personal, self.styles.header_blue)
-        ws.set_column(0, 0, 25)
-        
-        # Cabeceras de Fecha (más angostas aquí)
-        self.escribir_cabeceras_calendario(ws, fechas_unicas, col_width=6)
-        
         col_offset = len(fechas_unicas) + 2 # +1 por nombre, +1 por columna en blanco
         
         # Columna en blanco de separación
         ws.set_column(col_offset - 1, col_offset - 1, 2) 
 
-        # Columnas de Extensión (Totales, etc)
-        if extension_columns:
-            for i, col_name in enumerate(extension_columns):
-                ws.merge_range(0, col_offset + i, 1, col_offset + i, col_name, self.styles.header_blue)
-                ws.set_column(col_offset + i, col_offset + i, 10)
+        if es_enfermeria_vista_personal:
+            # Title bold style
+            title_bold = self.workbook.add_format({'bold': True, 'font_size': 11})
+            ws.write(0, 0, "HOSPITAL CENTRAL RAMON CARRILLO", title_bold)
+            ws.write(1, 0, "DEPARTAMENTO DE ENFERMERÍA", title_bold)
+            ws.write(2, 0, "PLANILLA DE ROTACION: ENFERMERÍA AREA CRITICA", title_bold)
+            
+            from datetime import date
+            MESES = {
+                1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
+                5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO",
+                9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE"
+            }
+            dt_start = date.fromisoformat(self.fecha_inicio) if hasattr(self, 'fecha_inicio') and self.fecha_inicio else date.today()
+            mes_str = MESES[dt_start.month]
+            anio_str = str(dt_start.year)
+            mes_anio_text = f"MES:   {mes_str}     AÑO:     {anio_str}"
+            ws.write(2, 14, mes_anio_text, title_bold)
+            
+            # Cabecera Lateral
+            ws.merge_range(3, 0, 4, 0, label_personal, self.styles.header_blue)
+            ws.set_column(0, 0, 25)
+            
+            # Cabeceras de Fecha
+            self.escribir_cabeceras_calendario(ws, fechas_unicas, col_width=6, start_row=3, use_day_only=True)
+            
+            # Columnas de Extensión
+            if extension_columns:
+                for i, col_name in enumerate(extension_columns):
+                    ws.merge_range(3, col_offset + i, 4, col_offset + i, col_name, self.styles.header_blue)
+                    ws.set_column(col_offset + i, col_offset + i, 10)
+            
+            row_ex = 5
+        else:
+            # Cabecera Lateral
+            ws.merge_range(0, 0, 1, 0, label_personal, self.styles.header_blue)
+            ws.set_column(0, 0, 25)
+            
+            # Cabeceras de Fecha (más angostas aquí)
+            self.escribir_cabeceras_calendario(ws, fechas_unicas, col_width=6, start_row=0, use_day_only=False)
+            
+            # Columnas de Extensión (Totales, etc)
+            if extension_columns:
+                for i, col_name in enumerate(extension_columns):
+                    ws.merge_range(0, col_offset + i, 1, col_offset + i, col_name, self.styles.header_blue)
+                    ws.set_column(col_offset + i, col_offset + i, 10)
+            
+            row_ex = 2
 
         # Formatos especiales para Enfermería Vista Personal (servicio_id == 2 y sheet_name == 'Vista Personal')
-        es_enfermeria_vista_personal = (self.servicio_id == 2 and sheet_name == 'Vista Personal')
         if es_enfermeria_vista_personal:
             # Formatos de fin de semana (azul-gris suave #E8EEF5)
             fmt_finde = self.workbook.add_format({
@@ -569,9 +885,6 @@ class BaseReport:
             fmt_turno_feriado_week = self.workbook.add_format({
                 'bg_color': '#FADBD8', 'border': 1, 'right': 5, 'bold': True, 'align': 'center', 'valign': 'vcenter', 'font_size': 9, 'text_wrap': True
             })
-
-        # Datos de Personal
-        row_ex = 2
         for nombre, row in df_persona.iterrows():
             ws.write(row_ex, 0, nombre, self.styles.name_cell)
             
@@ -619,12 +932,12 @@ class BaseReport:
                         is_holiday = (fecha in self.feriados)
                         
                         if is_holiday:
-                            if val == "FS":
+                            if val in ["FS", "FCG"]:
                                 fmt = fmt_feriado_week if is_sep else fmt_feriado
                             else:
                                 fmt = fmt_turno_feriado_week if is_sep else fmt_turno_feriado
                         elif is_weekend:
-                            if val == "FS":
+                            if val in ["FS", "FCG"]:
                                 fmt = fmt_finde_week if is_sep else fmt_finde
                             else:
                                 fmt = fmt_turno_finde_week if is_sep else fmt_turno_finde
@@ -646,12 +959,30 @@ class BaseReport:
                     if renombrar_francos and val in ["F", "FLR"]:
                         val = "FS"
                         fmt = self.styles.grey_cell_week if is_sep else self.styles.grey_cell
-                    elif val in ["F", "LAR", "LPP", "LM", "CM"]:
+                    elif val in ["F", "FS", "LAR", "LPP", "LM", "CM"]:
                         fmt = self.styles.grey_cell_week if is_sep else self.styles.grey_cell
                     elif val == "FLR":
                         fmt = self.styles.dark_grey_cell_week if is_sep else self.styles.dark_grey_cell
                     
-                    ws.write(row_ex, col_idx + 1, val, fmt)
+                    # Si es servicio 3 (médicos) y tenemos registradas las celdas del cronograma
+                    if self.servicio_id == 3 and self.cronograma_celdas:
+                        apellido = solo_apellido(nombre)
+                        celdas_dia = self.cronograma_celdas.get(fecha, [])
+                        if celdas_dia:
+                            val_defecto = val if val in ["LAR", "LPP", "LM", "CM"] else "F"
+                            
+                            formula_parts = []
+                            for t_exacto, ref_celda in celdas_dia:
+                                abr_turno = get_abreviacion(t_exacto)
+                                formula_parts.append(f"IF({ref_celda}=\"{apellido}\",\"{abr_turno}\",")
+                            
+                            formula_str = "=" + "".join(formula_parts) + f"\"{val_defecto}\"" + (")" * len(formula_parts))
+                            
+                            ws.write_formula(row_ex, col_idx + 1, formula_str, self.styles.cell_week if is_sep else self.styles.cell, value=val)
+                        else:
+                            ws.write(row_ex, col_idx + 1, val, fmt)
+                    else:
+                        ws.write(row_ex, col_idx + 1, val, fmt)
             
             # Escribir columnas de extensión si existen
             if extension_columns:
@@ -675,6 +1006,22 @@ class BaseReport:
                     else:
                         ws.write(row_ex, col_idx_excel, val_to_write, self.styles.cell)
             row_ex += 1
+            
+        # Formato condicional dinámico para celdas grises (Francos y Licencias) en médicos (servicio 3)
+        if self.servicio_id == 3:
+            for col_idx, fecha in enumerate(fechas_unicas):
+                col_let = col_to_letter(col_idx + 1)
+                rango_col = f"{col_let}3:{col_let}{row_ex}"
+                is_sep = self._es_fin_de_semana_sep(fecha)
+                fmt_condicional = self.styles.grey_cell_week if is_sep else self.styles.grey_cell
+                
+                for estado_gris in ["F", "LAR", "LPP", "LM", "CM"]:
+                    ws.conditional_format(rango_col, {
+                        'type': 'cell',
+                        'criteria': 'equal to',
+                        'value': f'"{estado_gris}"',
+                        'format': fmt_condicional
+                    })
             
         return ws, row_ex
 

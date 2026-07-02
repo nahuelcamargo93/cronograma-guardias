@@ -2,6 +2,16 @@
 
 Trabajan exactamente 4 turnos de 6 hs y 1 guardia de 12 hs si la semana está activa.
 Esto deja automáticamente 2 francos en la semana.
+
+Semana cortada (inicio o fin de mes): si la semana tiene menos de
+`min_dias_semana_completa` días hábiles (lun-vie, default 3), la restricción
+pasa a modo SOFT para evitar infeasibility. El mes adyacente completa con
+HARD vía historial.
+
+NOTA: Los feriados que caen en día de semana (lun-vie) cuentan como día hábil
+para esta regla, ya que se pueden asignar turnos de 12 hs en feriados.
+Si esto cambia (se prohíben turnos de 12 hs en feriados), hay que ajustar
+la lógica de conteo de días hábiles.
 """
 from datetime import date, timedelta
 from restricciones.cargador import add_hard
@@ -20,10 +30,13 @@ def apply(modelo, ctx) -> None:
     # Parámetros dinámicos de turnos y cantidad
     turnos_objetivo = params.get('turnos', ['MT', 'TNN'])
     cantidad = params.get('cantidad', 1)
+    min_dias_completa = params.get('min_dias_semana_completa', 3)
 
     fecha_inicio_dt = date.fromisoformat(ctx.fecha_inicio)
     semanas = get_semanas_calendario(ctx.dias, fecha_inicio_dt)
     historial = ctx.historial_semana_previa or {}
+
+
 
     for emp in ctx.empleados:
         if emp.nombre in excluidos:
@@ -64,7 +77,13 @@ def apply(modelo, ctx) -> None:
             ]
 
             if vars_turnos or prev_turnos_12h > 0:
-                if modo == "HARD":
+                # Semana cortada: forzar SOFT si pocos días hábiles (lun-vie)
+                dias_habiles = sum(1 for _, fecha in days if fecha.weekday() < 5)
+                modo_efectivo = modo
+                if dias_habiles < min_dias_completa:
+                    modo_efectivo = "SOFT"
+
+                if modo_efectivo == "HARD":
                     add_hard(modelo, ctx,
                              modelo.Add(sum(vars_turnos) + prev_turnos_12h == cantidad * activa),
                              f"{emp.nombre}_w{iso_w}_cant_{'_'.join(turnos_objetivo)}")

@@ -1,6 +1,7 @@
 """restricciones/hard/_utils.py — Utilidades matemáticas compartidas entre micro-reglas."""
 from datetime import date, timedelta
 from typing import Dict, List, Any
+from restricciones.cargador import add_hard
 
 
 def get_semanas_calendario(dias: int, fecha_inicio_dt: date) -> Dict[tuple, list]:
@@ -17,6 +18,8 @@ def is_finde(d: int, offset_dia: int, feriados) -> bool:
 
 
 def prohibir_turnos_dia(modelo, ctx, nombre_emp: str, dia_idx: int) -> None:
+    if hasattr(ctx, 'dias_bloqueados') and dia_idx in ctx.dias_bloqueados:
+        return
     for td in ["Semana", "Finde_Feriado"]:
         for t in ctx.demanda_turnos.get(td, {}).keys():
             if (nombre_emp, dia_idx, t) in ctx.turnos:
@@ -25,6 +28,7 @@ def prohibir_turnos_dia(modelo, ctx, nombre_emp: str, dia_idx: int) -> None:
 
 def mapear_turno_a_familias(turno: str) -> List[str]:
     t = turno.upper()
+    if t == 'FCG': return []
     if t in ('MT', 'MT_UTI', 'MT_UCO', 'MAÑANA_TARDE'): return ['M', 'T']
     if t == 'M': return ['M']
     if t == 'T': return ['T']
@@ -105,8 +109,6 @@ def crear_y_vincular_variables_semanales(modelo, ctx) -> None:
             hist_flags = {'M': 0, 'T': 0, 'TN': 0, 'N': 0}
             if ganador:
                 hist_flags[ganador] = 1
-                var_map = {'M': is_M, 'T': is_T, 'TN': is_TN, 'N': is_N}
-                modelo.Add(var_map[ganador] == 1)
             vars_M  = [ctx.turnos[(nombre, d, 'M')]  for d in dias_sem if (nombre, d, 'M')  in ctx.turnos]
             vars_T  = [ctx.turnos[(nombre, d, 'T')]  for d in dias_sem if (nombre, d, 'T')  in ctx.turnos]
             vars_TN = [ctx.turnos[(nombre, d, 'TN')] for d in dias_sem if (nombre, d, 'TN') in ctx.turnos]
@@ -117,3 +119,22 @@ def crear_y_vincular_variables_semanales(modelo, ctx) -> None:
             modelo.Add(is_T  <= sum(vars_T)  + sum(vars_MT)  + hist_flags['T'])
             modelo.Add(is_TN <= sum(vars_TN) + sum(vars_TNN) + hist_flags['TN'])
             modelo.Add(is_N  <= sum(vars_N)  + sum(vars_TNN) + hist_flags['N'])
+
+
+def es_finde_previo_lpp(emp, d_idx, fecha_inicio_dt) -> bool:
+    """Retorna True si d_idx es sábado o domingo previo al inicio de una licencia LPP que empieza un lunes."""
+    fecha_d = fecha_inicio_dt + timedelta(days=d_idx)
+    wd = fecha_d.weekday()
+    if wd not in (5, 6):
+        return False
+    
+    # Si es sábado (5), el lunes correspondiente es d_idx + 2. Si es domingo (6), es d_idx + 1.
+    lunes_idx = d_idx + (2 if wd == 5 else 1)
+    
+    if lunes_idx in emp.dias_licencia:
+        tipos_lic = getattr(emp, 'tipos_licencia', {})
+        if tipos_lic.get(lunes_idx) == 'LPP':
+            if lunes_idx == 0 or (lunes_idx - 1) not in emp.dias_licencia:
+                return True
+    return False
+

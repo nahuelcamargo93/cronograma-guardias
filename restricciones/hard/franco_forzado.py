@@ -12,6 +12,22 @@ def apply(modelo, ctx) -> None:
             if d in emp.dias_licencia:
                 continue
             fecha_d_str = (fecha_inicio_dt + timedelta(days=d)).isoformat()
+            
+            # Si hay asignación fija por fecha específica (no recurrente), no se aplica el franco forzado
+            params_fija = _re.resolver_parametros_regla(
+                'ASIGNACION_FIJA', emp.nombre, fecha_d_str,
+                ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+            )
+            tiene_fija_fecha = False
+            if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                for asig in params_fija:
+                    if asig.get('Fecha') == fecha_d_str:
+                        tiene_fija_fecha = True
+                        break
+            
+            if tiene_fija_fecha:
+                continue
+
             params = _re.resolver_parametros_regla(
                 'FRANCO_FORZADO', emp.nombre, fecha_d_str,
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal

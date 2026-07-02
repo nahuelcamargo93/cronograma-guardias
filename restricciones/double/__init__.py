@@ -53,4 +53,6 @@ REGLAS_DOUBLE = [
     "restricciones.double.manejo_findes",
     "restricciones.double.no_repetir_n_consecutivo",
     "restricciones.double.repeticion_tipo_semana",
+    "restricciones.double.min_francos_consecutivos",
+    "restricciones.double.distancia_minima_tipo_semana",
 ]

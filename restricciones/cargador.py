@@ -55,8 +55,17 @@ def preparar_assumption(modelo, ctx, codigo_regla: str, sufijo: str = "") -> obj
 
 def add_hard(modelo, ctx, constraint, etiqueta: str = "") -> None:
     """Agrega una restricción dura con soporte automático de debugger."""
+    if ctx.codigo_regla:
+        if not hasattr(ctx, 'reglas_duras_aplicadas'):
+            ctx.reglas_duras_aplicadas = set()
+        ctx.reglas_duras_aplicadas.add(ctx.codigo_regla)
+
     # Comprobar si la regla completa está excluida
     if (ctx.codigo_regla, None) in getattr(ctx, 'exclusiones', set()):
+        etiqueta_limpia = etiqueta.replace(" ", "_").replace("-", "_") if etiqueta else ""
+        b_excl = modelo.NewBoolVar(f"excl_{ctx.codigo_regla}_{etiqueta_limpia}" if etiqueta_limpia else f"excl_{ctx.codigo_regla}")
+        constraint.OnlyEnforceIf(b_excl)
+        modelo.Add(b_excl == 0)
         return
 
     # Comprobar si la regla está excluida para un empleado específico
@@ -66,7 +75,85 @@ def add_hard(modelo, ctx, constraint, etiqueta: str = "") -> None:
                 emp_formato = excl_emp.replace(" ", "_").replace("-", "_")
                 etiqueta_formato = etiqueta.replace(" ", "_").replace("-", "_")
                 if emp_formato in etiqueta_formato:
+                    b_excl = modelo.NewBoolVar(f"excl_{ctx.codigo_regla}_{etiqueta_formato}")
+                    constraint.OnlyEnforceIf(b_excl)
+                    modelo.Add(b_excl == 0)
                     return
+
+    # Desactivar restricciones que involucren únicamente variables de días bloqueados
+    desactivar_por_bloqueo = False
+    try:
+        if hasattr(ctx, 'dias_bloqueados') and ctx.dias_bloqueados:
+            c_idx = constraint.Index()
+            proto = modelo.Proto().constraints[c_idx]
+            inds = []
+            if proto.enforcement_literal:
+                for lit in proto.enforcement_literal:
+                    inds.append(lit if lit >= 0 else -lit - 1)
+            if proto.has_linear():
+                inds.extend(proto.linear.vars)
+            elif proto.has_bool_or():
+                for lit in proto.bool_or.literals:
+                    inds.append(lit if lit >= 0 else -lit - 1)
+            elif proto.has_bool_and():
+                for lit in proto.bool_and.literals:
+                    inds.append(lit if lit >= 0 else -lit - 1)
+            elif proto.has_at_most_one():
+                for lit in proto.at_most_one.literals:
+                    inds.append(lit if lit >= 0 else -lit - 1)
+            elif proto.has_exactly_one():
+                for lit in proto.exactly_one.literals:
+                    inds.append(lit if lit >= 0 else -lit - 1)
+            
+            inds = list(set(inds))
+            
+            if inds:
+                import re
+                todas_bloqueadas = True
+                for idx in inds:
+                    var_name = modelo.Proto().variables[idx].name
+                    match = re.search(r'_(?:dia|d)(\d+)(?:_|$)', var_name)
+                    if match:
+                        dia_idx = int(match.group(1))
+                        if dia_idx not in ctx.dias_bloqueados:
+                            todas_bloqueadas = False
+                            break
+                    else:
+                        todas_bloqueadas = False
+                        break
+                if todas_bloqueadas:
+                    desactivar_por_bloqueo = True
+            elif etiqueta:
+                import re
+                match = re.search(r'_d(\d+)', etiqueta)
+                if match:
+                    dia_idx = int(match.group(1))
+                    if dia_idx in ctx.dias_bloqueados:
+                        desactivar_por_bloqueo = True
+    except Exception:
+        pass
+
+    if desactivar_por_bloqueo:
+        if ctx.modo_debug:
+            label = f"viol__{ctx.codigo_regla}__{etiqueta}" if etiqueta else f"viol__{ctx.codigo_regla}"
+            v = modelo.NewBoolVar(label)
+            constraint.OnlyEnforceIf(v.Not())
+            modelo.Add(v == 0)
+        else:
+            if ctx.codigo_regla:
+                etiqueta_limpia = etiqueta.replace(" ", "_").replace("-", "_") if etiqueta else ""
+                nombre_assume = f"REG_{ctx.codigo_regla}__{etiqueta_limpia}" if etiqueta_limpia else f"REG_{ctx.codigo_regla}"
+                
+                b = None
+                for name, var in ctx.assumptions:
+                    if name == nombre_assume:
+                        b = var
+                        break
+                if b is None:
+                    b = modelo.NewBoolVar(nombre_assume)
+                constraint.OnlyEnforceIf(b)
+                modelo.Add(b == 0)
+        return
 
     if ctx.modo_debug:
         label = f"viol__{ctx.codigo_regla}__{etiqueta}" if etiqueta else f"viol__{ctx.codigo_regla}"
@@ -140,15 +227,53 @@ def reportar_conflicto(solver, ctx) -> list[str]:
     """
     indices = set(solver.SufficientAssumptionsForInfeasibility())
     conflictos = []
-    print("\n" + "="*60)
-    print("  [WARNING] CONFLICTO MATEMÁTICO DETECTADO")
-    print("   Reglas que hacen el cronograma inviable:")
+    
+    # Agrupar colisiones por regla y recolectar personas/detalles afectados
+    reglas_conflictivas = {} # {codigo_regla: { 'detalles': [], 'personas': set() }}
+    
     for etiqueta, b in ctx.assumptions:
         if b.Index() in indices:
             conflictos.append(etiqueta)
-            print(f"   -> {etiqueta}")
+            
+            # Decodificar etiqueta
+            if etiqueta.startswith("REG_"):
+                etiqueta_sin_prefix = etiqueta[4:]
+            else:
+                etiqueta_sin_prefix = etiqueta
+                
+            if "__" in etiqueta_sin_prefix:
+                codigo_regla, detalle = etiqueta_sin_prefix.split("__", 1)
+                
+                # Intentar extraer el nombre del empleado (suele estar al principio del detalle)
+                # Formatos comunes: "Vivas,_Eric_d22Noche...", "Camargo,_Nahuel_d0..."
+                persona = None
+                import re
+                match = re.split(r'_(?:d\d+|hist_|excl_)', detalle)
+                if match and match[0]:
+                    persona = match[0].replace("_", " ")
+                
+                reglas_conflictivas.setdefault(codigo_regla, {'detalles': [], 'personas': set()})
+                if persona:
+                    reglas_conflictivas[codigo_regla]['personas'].add(persona)
+                reglas_conflictivas[codigo_regla]['detalles'].append(detalle)
+            else:
+                codigo_regla = etiqueta_sin_prefix
+                reglas_conflictivas.setdefault(codigo_regla, {'detalles': [], 'personas': set()})
+
+    print("\n" + "="*60)
+    print("  [WARNING] CONFLICTO MATEMÁTICO DETECTADO")
+    print("   Reglas que hacen el cronograma inviable:")
+    for codigo_regla, info in reglas_conflictivas.items():
+        if info['personas']:
+            personas_str = ", ".join(sorted(info['personas']))
+            print(f"   -> {codigo_regla} (Colisiones en: {personas_str})")
+        elif info['detalles']:
+            print(f"   -> {codigo_regla} ({len(info['detalles'])} colisiones detalladas)")
+        else:
+            print(f"   -> {codigo_regla}")
     print("="*60 + "\n")
     return conflictos
+
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +366,10 @@ def cargar_y_ejecutar_todas(modelo, ctx) -> None:
 
     ejecutar_reglas(modelo, ctx, REGLAS_HARD)
     ejecutar_reglas(modelo, ctx, REGLAS_DOUBLE)
-    ejecutar_reglas(modelo, ctx, REGLAS_SOFT)
 
-    construir_objetivo_soft(modelo, ctx)
+    desactivar_soft = getattr(ctx, 'desactivar_soft', False)
+    if not desactivar_soft:
+        ejecutar_reglas(modelo, ctx, REGLAS_SOFT)
+        construir_objetivo_soft(modelo, ctx)
+
     activar_assumptions(modelo, ctx, de_verdad=getattr(ctx, 'force_assumptions', False))

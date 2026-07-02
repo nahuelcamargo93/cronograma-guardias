@@ -1,51 +1,28 @@
 import sqlite3
-import json
 
-conn = sqlite3.connect('cronograma_inteligente.db')
-conn.row_factory = sqlite3.Row
+conn = sqlite3.connect("cronograma_inteligente.db")
+cursor = conn.cursor()
 
-print("=== PERSONAL SERVICIO 1 ===")
-for r in conn.execute("SELECT nombre, rol, categoria, activo FROM personal WHERE servicio_id = 1").fetchall():
-    print(dict(r))
+def print_query(title, query, params=()):
+    print("="*60)
+    print(title)
+    print("="*60)
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    for r in rows:
+        print(r)
+    print()
 
-print("\n=== REGLAS SERVICIO 1 ===")
-for r in conn.execute("SELECT codigo_regla, activo, parametros_json FROM servicios_reglas WHERE servicio_id = 1").fetchall():
-    print(r['codigo_regla'], "Activo:", r['activo'], "Params:", r['parametros_json'])
+# 1. Guardias de Albelo Tania, Guiñazu Karina, Mañe Lorena en julio 2026 (cronograma aprobado)
+print_query(
+    "Guardias de Albelo Tania, Guiñazu Karina, Mañe Lorena en julio 2026",
+    "SELECT g.nombre, g.fecha, g.turno FROM guardias g JOIN cronogramas c ON g.cronograma_id = c.id WHERE (g.nombre LIKE '%ALBELO TANIA%' OR g.nombre LIKE '%GUIÑAZU KARINA%' OR g.nombre LIKE '%MAÑE LORENA%') AND g.fecha LIKE '2026-07%' AND c.estado = 'aprobado' ORDER BY g.nombre, g.fecha"
+)
 
-print("\n=== REGLAS PERSONAL SERVICIO 1 ===")
-for r in conn.execute("""
-    SELECT pr.personal_nombre, pr.codigo_regla, pr.activo, pr.parametros_json
-    FROM personal_reglas pr
-    JOIN personal p ON pr.personal_nombre = p.nombre
-    WHERE p.servicio_id = 1
-""").fetchall():
-    print(r['personal_nombre'], r['codigo_regla'], "Activo:", r['activo'], "Params:", r['parametros_json'])
-
-print("\n=== AJUSTES PERSONAL REGLAS ===")
-for r in conn.execute("""
-    SELECT pra.personal_nombre, pra.codigo_regla, pra.fecha_inicio, pra.fecha_fin, pra.accion, pra.parametros_json, pra.activo
-    FROM personal_reglas_ajustes pra
-    JOIN personal p ON pra.personal_nombre = p.nombre
-    WHERE p.servicio_id = 1 AND pra.activo = 1
-""").fetchall():
-    print(dict(r))
-
-print("\n=== PUESTOS SERVICIO 1 ===")
-for r in conn.execute("SELECT * FROM puestos WHERE servicio_id = 1").fetchall():
-    print(dict(r))
-
-print("\n=== TURNOS CONFIG SERVICIO 1 ===")
-for r in conn.execute("SELECT * FROM turnos_config WHERE servicio_id = 1").fetchall():
-    print(dict(r))
-
-print("\n=== DEMANDA CONFIG SERVICIO 1 ===")
-for r in conn.execute("""
-    SELECT dc.*, p.nombre as puesto
-    FROM demanda_config dc
-    JOIN puestos p ON dc.puesto_id = p.id
-    WHERE p.servicio_id = 1
-""").fetchall():
-    print(dict(r))
-
+# 3. Licencias de Ortiz Laura y Alcaraz Eliana en julio/agosto 2026
+print_query(
+    "Licencias de Ortiz Laura y Alcaraz Eliana",
+    "SELECT nombre, fecha_inicio, fecha_fin, tipo FROM licencias WHERE nombre LIKE '%ORTIZ LAURA%' OR nombre LIKE '%ALCARAZ ELIANA%' ORDER BY nombre, fecha_inicio"
+)
 
 conn.close()

@@ -57,7 +57,7 @@ def apply(modelo, ctx) -> None:
 
         # Incorporar el historial previo
         hist_emp = historial.get(emp.nombre, [])
-        worked_hist = {h['fecha'] for h in hist_emp}
+        worked_hist = {h['fecha'] for h in hist_emp if h.get('turno') != 'FCG'}
         
         T = {}
         for d in range(-max_francos, ctx.dias):

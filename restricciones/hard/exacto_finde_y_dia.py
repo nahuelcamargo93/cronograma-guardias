@@ -88,16 +88,43 @@ def apply(modelo, ctx) -> None:
                 ctx.penalizaciones_soft.append(violation * peso_soft)
 
         # Contar asignaciones fijas en el día específico
-        cant_asig_fijas = sum(
-            1 for d in range(ctx.dias)
-            if (fecha_inicio_dt + timedelta(days=d)).weekday() == dia_target
-            and d not in emp.dias_licencia
-            and _re.regla_existe(_re.resolver_parametros_regla(
-                'ASIGNACION_FIJA', emp.nombre,
-                (fecha_inicio_dt + timedelta(days=d)).isoformat(),
+        cant_asig_fijas = 0
+        for d in range(ctx.dias):
+            fecha_d = fecha_inicio_dt + timedelta(days=d)
+            if fecha_d.weekday() != dia_target:
+                continue
+            if d in emp.dias_licencia:
+                continue
+
+            fecha_d_str = fecha_d.isoformat()
+            params_fija = _re.resolver_parametros_regla(
+                'ASIGNACION_FIJA', emp.nombre, fecha_d_str,
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
-            ))
-        )
+            )
+            if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                params_franco = _re.resolver_parametros_regla(
+                    'FRANCO_FORZADO', emp.nombre, fecha_d_str,
+                    ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+                )
+                tiene_franco = _re.regla_existe(params_franco) and not _re.regla_suspendida(params_franco)
+
+                for asig in params_fija:
+                    fecha_asig = asig.get('Fecha')
+                    dia_asig   = asig.get('Dia')
+                    
+                    es_por_fecha = bool(fecha_asig and fecha_asig == fecha_d_str)
+                    es_por_dia = bool(dia_asig and _MAPA.get(dia_asig.lower().translate(_NORM)) == dia_target and d not in ctx.feriados)
+                    
+                    match = False
+                    if es_por_fecha:
+                        match = True
+                    elif es_por_dia:
+                        if not tiene_franco:
+                            match = True
+
+                    if match:
+                        cant_asig_fijas += 1
+                        break
 
         vars_dia = []
         for d in range(ctx.dias):
@@ -108,7 +135,21 @@ def apply(modelo, ctx) -> None:
                 'FRANCO_FORZADO', emp.nombre, fecha_d_str,
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
             )
-            if _re.regla_existe(p_franco) and not _re.regla_suspendida(p_franco): continue
+            tiene_franco = _re.regla_existe(p_franco) and not _re.regla_suspendida(p_franco)
+
+            tiene_fija_fecha = False
+            params_fija = _re.resolver_parametros_regla(
+                'ASIGNACION_FIJA', emp.nombre, fecha_d_str,
+                ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+            )
+            if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                for asig in params_fija:
+                    if asig.get('Fecha') == fecha_d_str:
+                        tiene_fija_fecha = True
+                        break
+
+            if tiene_franco and not tiene_fija_fecha:
+                continue
             v = modelo.NewBoolVar(f'traba_dia_fyd_{emp.nombre}_{dia_target}_{d}')
             pool = [ctx.turnos[(emp.nombre, d, t)]
                     for t in ctx.turnos_dict.keys()

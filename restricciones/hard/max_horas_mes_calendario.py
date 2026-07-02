@@ -22,6 +22,8 @@ def apply(modelo, ctx) -> None:
             if _re.regla_suspendida(params):
                 continue
             max_h = params.get('max_horas', 144) if isinstance(params, dict) else 144
+            modo = params.get('modo', 'HARD') if isinstance(params, dict) else 'HARD'
+            peso_soft = params.get('peso_soft', 100_000) if isinstance(params, dict) else 100_000
 
             vars_h = []
             for d in dias_m:
@@ -50,6 +52,13 @@ def apply(modelo, ctx) -> None:
             tope = int((float(max_h) / dias_del_mes) * len(dias_m) + 0.5)
             horas_lic = min(horas_lic, tope)
             if vars_h:
-                add_hard(modelo, ctx,
-                         modelo.Add(sum(vars_h) + horas_lic <= tope),
-                         f"{emp.nombre}_{m_key}")
+                if modo.upper() == "SOFT":
+                    nombre_limpio = emp.nombre.replace(" ", "_").replace(",", "")
+                    exceso = modelo.NewIntVar(0, 744, f"exceso_max_h_{nombre_limpio}_{m_key}")
+                    modelo.Add(exceso >= sum(vars_h) + horas_lic - tope)
+                    ctx.penalizaciones_soft.append(exceso * peso_soft)
+                else:
+                    add_hard(modelo, ctx,
+                             modelo.Add(sum(vars_h) + horas_lic <= tope),
+                             f"{emp.nombre}_{m_key}")
+

@@ -61,7 +61,7 @@ def apply(modelo, ctx) -> None:
                         licencias_prev += 1
                     else:
                         fecha_str = dia_semana_dt.isoformat()
-                        trabajo = [h for h in hist_emp if h['fecha'] == fecha_str]
+                        trabajo = [h for h in hist_emp if h['fecha'] == fecha_str and h.get('turno') != 'FCG']
                         if trabajo:
                             turnos_prev += 1
                         else:

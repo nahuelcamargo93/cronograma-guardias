@@ -29,7 +29,6 @@ def apply(modelo, ctx) -> None:
     peso_soft = params.get('peso_soft', 8000)
 
     familias = ['M', 'T', 'TN', 'N']
-
     fecha_inicio_dt = date.fromisoformat(ctx.fecha_inicio)
 
     # Construir mapa semana → lista de días (índices)
@@ -40,107 +39,64 @@ def apply(modelo, ctx) -> None:
         dias_por_semana.setdefault(lunes, []).append(d)
 
     semanas_keys = sorted(dias_por_semana.keys())
-    if not semanas_keys:
-        return
+    n_semanas = len(semanas_keys)
+    if n_semanas < 5:
+        return  # Solo aplica para meses con 5 o 6 semanas planificadas
 
     for emp in ctx.empleados:
-        # ── 1. Determinar semanas con al menos 1 día activo (no licencia) ──────
-        semanas_activas: list[str] = []
-        for sem_key in semanas_keys:
-            dias_sem = dias_por_semana[sem_key]
-            hay_activo = any(d not in emp.dias_licencia for d in dias_sem)
-            if hay_activo:
-                semanas_activas.append(sem_key)
-
-        if len(semanas_activas) < 2:
-            continue  # Nada que restringir con tan pocas semanas
-
-        n_activas = len(semanas_activas)
-
-        # Recopilar vars_turno_sem solo para semanas activas
-        vars_por_semana: dict[str, dict] = {}
-        for sem_key in semanas_activas:
-            v_dict = ctx.vars_turno_sem.get((emp.nombre, sem_key))
-            if v_dict:
-                vars_por_semana[sem_key] = v_dict
-
-        if len(vars_por_semana) < 2:
-            continue
-
         nombre_safe = emp.nombre.replace(' ', '_').replace(',', '').replace('-', '_')
 
-        # ── 2. CASO A: < 4 semanas activas → no puede repetir ningún tipo ─────
-        if n_activas < 4:
-            for fam in familias:
-                vars_fam = [
-                    vars_por_semana[s][fam]
-                    for s in semanas_activas
-                    if fam in vars_por_semana.get(s, {})
-                ]
-                if len(vars_fam) < 2:
-                    continue
-                sum_fam = sum(vars_fam)
-                if modo == 'HARD':
-                    add_hard(
-                        modelo, ctx,
-                        modelo.Add(sum_fam <= 1),
-                        f"{emp.nombre}_no_rep_{fam}_lt4"
-                    )
-                else:
-                    violacion = modelo.NewIntVar(
-                        0, n_activas,
-                        f"viol_rep_{fam}_{nombre_safe}_lt4"
-                    )
-                    modelo.Add(violacion >= sum_fam - 1)
-                    ctx.penalizaciones_soft.append(violacion * peso_soft)
-            continue
+        # Alineación de Semana 5 con Semana 1 (índices 4 y 0)
+        if n_semanas >= 5:
+            sem_1 = semanas_keys[0]
+            sem_5 = semanas_keys[4]
 
-        # ── 3. CASO B: >= 4 semanas activas → solo puede repetir el tipo_inicio ─
-        #
-        # Para cada familia fam:
-        #   - Si v_dict_first[fam] == 1 → fam es el tipo_inicio → puede repetirse
-        #   - Si v_dict_first[fam] == 0 → fam NO es el tipo_inicio → max 1 semana
-        #
-        # Implementación sin OnlyEnforceIf (compatible con add_hard):
-        #   sum_fam <= 1 + v_dict_first[fam] * (n_activas - 1)
-        #
-        #   Cuando v_dict_first[fam]=0: sum_fam <= 1  ✓ (restringe)
-        #   Cuando v_dict_first[fam]=1: sum_fam <= n_activas (siempre true) ✓
+            v_dict_1 = ctx.vars_turno_sem.get((emp.nombre, sem_1))
+            v_dict_5 = ctx.vars_turno_sem.get((emp.nombre, sem_5))
 
-        first_sem = semanas_activas[0]
-        v_dict_first = vars_por_semana.get(first_sem)
-        if not v_dict_first:
-            continue
+            if v_dict_1 and v_dict_5:
+                # La semana está activa si tiene asignada alguna categoría semanal
+                activa_1 = modelo.NewBoolVar(f"act_w1_{nombre_safe}")
+                activa_5 = modelo.NewBoolVar(f"act_w5_{nombre_safe}")
+                modelo.Add(activa_1 == sum(v_dict_1.values()))
+                modelo.Add(activa_5 == sum(v_dict_5.values()))
 
-        for fam in familias:
-            if fam not in v_dict_first:
-                continue
+                for fam in familias:
+                    if fam in v_dict_1 and fam in v_dict_5:
+                        if modo == 'HARD':
+                            add_hard(
+                                modelo, ctx,
+                                modelo.Add(v_dict_5[fam] == v_dict_1[fam]).OnlyEnforceIf([activa_1, activa_5]),
+                                f"{emp.nombre}_align_w5_w1_{fam}"
+                            )
+                        else:
+                            viol = modelo.NewBoolVar(f"viol_align_w5_w1_{fam}_{nombre_safe}")
+                            modelo.Add(v_dict_5[fam] == v_dict_1[fam]).OnlyEnforceIf([activa_1, activa_5, viol.Not()])
+                            ctx.penalizaciones_soft.append(viol * peso_soft)
 
-            vars_fam = [
-                vars_por_semana[s][fam]
-                for s in semanas_activas
-                if fam in vars_por_semana.get(s, {})
-            ]
-            if len(vars_fam) < 2:
-                continue
+        # Alineación de Semana 6 con Semana 2 (índices 5 y 1)
+        if n_semanas >= 6:
+            sem_2 = semanas_keys[1]
+            sem_6 = semanas_keys[5]
 
-            sum_fam = sum(vars_fam)
-            # Slack adicional = (n_activas - 1) si fam es tipo_inicio, 0 si no lo es
-            slack = v_dict_first[fam] * (n_activas - 1)
+            v_dict_2 = ctx.vars_turno_sem.get((emp.nombre, sem_2))
+            v_dict_6 = ctx.vars_turno_sem.get((emp.nombre, sem_6))
 
-            if modo == 'HARD':
-                add_hard(
-                    modelo, ctx,
-                    modelo.Add(sum_fam <= 1 + slack),
-                    f"{emp.nombre}_rep_{fam}_inicio"
-                )
-            else:
-                # violacion = max(0, sum_fam - 1 - slack)
-                # Cuando fam es tipo_inicio (slack=n_activas-1): violacion siempre 0 ✓
-                # Cuando fam no es tipo_inicio (slack=0): violacion >= sum_fam - 1  ✓
-                violacion = modelo.NewIntVar(
-                    0, n_activas,
-                    f"viol_rep_{fam}_{nombre_safe}"
-                )
-                modelo.Add(violacion >= sum_fam - 1 - slack)
-                ctx.penalizaciones_soft.append(violacion * peso_soft)
+            if v_dict_2 and v_dict_6:
+                activa_2 = modelo.NewBoolVar(f"act_w2_{nombre_safe}")
+                activa_6 = modelo.NewBoolVar(f"act_w6_{nombre_safe}")
+                modelo.Add(activa_2 == sum(v_dict_2.values()))
+                modelo.Add(activa_6 == sum(v_dict_6.values()))
+
+                for fam in familias:
+                    if fam in v_dict_2 and fam in v_dict_6:
+                        if modo == 'HARD':
+                            add_hard(
+                                modelo, ctx,
+                                modelo.Add(v_dict_6[fam] == v_dict_2[fam]).OnlyEnforceIf([activa_2, activa_6]),
+                                f"{emp.nombre}_align_w6_w2_{fam}"
+                            )
+                        else:
+                            viol = modelo.NewBoolVar(f"viol_align_w6_w2_{fam}_{nombre_safe}")
+                            modelo.Add(v_dict_6[fam] == v_dict_2[fam]).OnlyEnforceIf([activa_2, activa_6, viol.Not()])
+                            ctx.penalizaciones_soft.append(viol * peso_soft)

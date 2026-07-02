@@ -69,12 +69,12 @@ from restricciones.hard._utils import is_finde as is_f
 # 6 de julio (d=5), 9 de julio (d=8), 10 de julio (d=9), 25 de julio (d=24), 28 de julio (d=27), 31 de julio (d=30)
 nombre_sanchez = "Sánchez Reinoso, Ana Belén"
 patron = {
-    5: "G_Planta",
-    8: "D_Planta",
-    9: "G_Planta",
-    24: "G_Planta",
-    27: "G_Planta",
-    30: "G_Planta"
+    5: "Guardia_Planta",
+    8: "Dia_Planta",
+    9: "Guardia_Planta",
+    24: "Guardia_Planta",
+    27: "Guardia_Planta",
+    30: "Guardia_Planta"
 }
 
 # Primero, setear a 1 las indicadas

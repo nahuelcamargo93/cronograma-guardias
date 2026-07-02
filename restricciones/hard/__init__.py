@@ -41,6 +41,8 @@ REGLAS_HARD = [
     # 4. Restricciones de licencias y patrones
     "restricciones.hard.fin_licencia",
     "restricciones.hard.finde_post_licencia",
+    "restricciones.hard.franco_previo_lpp",
+    "restricciones.hard.turno_previo_licencia",
     "restricciones.hard.patron_ciclico",
     "restricciones.hard.personal_asociado",
     "restricciones.hard.personal_disociado",

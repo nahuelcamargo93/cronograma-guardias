@@ -8,7 +8,7 @@ import rule_engine as _re
 
 
 def apply(modelo, ctx):
-    peso_cfg = ctx.reglas_servicio.get('PESO_EQUIDAD_FINDES_ANUAL', {})
+    peso_cfg = ctx.reglas_servicio.get('PESO_EQUIDAD_FINDES_ANUAL') or ctx.reglas_servicio.get('EQUIDAD_FINDES_ANUAL', {})
     peso = peso_cfg.get('peso', 500) if isinstance(peso_cfg, dict) else 500
 
     fecha_inicio_dt = date.fromisoformat(ctx.fecha_inicio)
@@ -24,8 +24,9 @@ def apply(modelo, ctx):
     ratios_lista = []
 
     for emp in ctx.empleados:
+        codigo_activo = 'PESO_EQUIDAD_FINDES_ANUAL' if 'PESO_EQUIDAD_FINDES_ANUAL' in ctx.reglas_servicio else 'EQUIDAD_FINDES_ANUAL'
         params = _re.resolver_parametros_regla(
-            'PESO_EQUIDAD_FINDES_ANUAL', emp.nombre, ctx.fecha_inicio,
+            codigo_activo, emp.nombre, ctx.fecha_inicio,
             ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
         )
         if _re.regla_suspendida(params):
@@ -64,7 +65,7 @@ def apply(modelo, ctx):
             modelo.Add(ratio == 0)
 
         params_activo = _re.resolver_parametros_regla(
-            'PESO_EQUIDAD_FINDES_ANUAL', emp.nombre, ctx.fecha_inicio,
+            codigo_activo, emp.nombre, ctx.fecha_inicio,
             ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
         )
         if not _re.regla_suspendida(params_activo):

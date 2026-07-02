@@ -1,15 +1,14 @@
 import sqlite3
+import pandas as pd
 
 conn = sqlite3.connect('cronograma_inteligente.db')
-cursor = conn.cursor()
 
-for cid in [261, 262, 263]:
-    cursor.execute("SELECT COUNT(*) FROM infracciones_debug WHERE cronograma_id = ?", (cid,))
-    count = cursor.fetchone()[0]
-    print(f"Crono {cid} tiene {count} infracciones en infracciones_debug")
-    if count > 0:
-        cursor.execute("SELECT codigo_regla, detalle FROM infracciones_debug WHERE cronograma_id = ? LIMIT 10", (cid,))
-        for r in cursor.fetchall():
-            print("  -", r)
+print("=== INFRACCIONES DEL CRONOGRAMA 586 (MODO DEBUG SOFT) ===")
+df_viol = pd.read_sql_query("""
+    SELECT codigo_regla, detalle 
+    FROM infracciones_debug 
+    WHERE cronograma_id = 586
+""", conn)
+print(df_viol.to_string())
 
 conn.close()

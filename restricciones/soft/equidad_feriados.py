@@ -7,13 +7,15 @@ import rule_engine as _re
 
 
 def apply(modelo, ctx):
-    peso = ctx.reglas_servicio.get('PESO_EQUIDAD_FERIADOS', {}).get('peso', 0)
+    peso_cfg = ctx.reglas_servicio.get('PESO_EQUIDAD_FERIADOS') or ctx.reglas_servicio.get('EQUIDAD_FERIADOS', {})
+    peso = peso_cfg.get('peso', 0) if isinstance(peso_cfg, dict) else 0
     if peso == 0:
         return
 
+    codigo_activo = 'PESO_EQUIDAD_FERIADOS' if 'PESO_EQUIDAD_FERIADOS' in ctx.reglas_servicio else 'EQUIDAD_FERIADOS'
     for emp in ctx.empleados:
         params = _re.resolver_parametros_regla(
-            'PESO_EQUIDAD_FERIADOS', emp.nombre, ctx.fecha_inicio,
+            codigo_activo, emp.nombre, ctx.fecha_inicio,
             ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
         )
         if _re.regla_suspendida(params):

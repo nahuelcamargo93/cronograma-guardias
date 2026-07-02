@@ -34,11 +34,27 @@ def apply(modelo, ctx) -> None:
             # Determinar qué turnos específicos están fijos hoy
             turnos_fijos = set()
             if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                # Detectar si hay franco forzado hoy
+                params_franco = _re.resolver_parametros_regla(
+                    'FRANCO_FORZADO', emp.nombre, fecha_dia_str,
+                    ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+                )
+                tiene_franco = _re.regla_existe(params_franco) and not _re.regla_suspendida(params_franco)
+
                 for asig in params_fija:
                     fecha_asig = asig.get('Fecha')
                     dia_asig   = asig.get('Dia')
-                    match = (fecha_asig and fecha_asig == fecha_dia_str) or \
-                            (dia_asig and mapa_dias.get(dia_asig) == dia_semana and dia not in ctx.feriados)
+                    
+                    es_por_fecha = bool(fecha_asig and fecha_asig == fecha_dia_str)
+                    es_por_dia = bool(dia_asig and mapa_dias.get(dia_asig) == dia_semana and dia not in ctx.feriados)
+                    
+                    match = False
+                    if es_por_fecha:
+                        match = True
+                    elif es_por_dia:
+                        if not tiene_franco:
+                            match = True
+
                     if match:
                         turno_config = asig['Turno'].replace(" ", "_")
                         turnos_fijos.add(turno_config)

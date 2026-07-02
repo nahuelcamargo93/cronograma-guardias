@@ -30,13 +30,14 @@ def apply(modelo, ctx):
     fecha_inicio_dt = date.fromisoformat(ctx.fecha_inicio)
     
     # 1. Obtener la regla y ver si tiene nivelación histórica
-    regla_serv = ctx.reglas_servicio.get('PESO_EQUIDAD_FSL')
+    codigo_activo = 'PESO_EQUIDAD_FSL' if 'PESO_EQUIDAD_FSL' in ctx.reglas_servicio else 'EQUIDAD_FSL'
+    regla_serv = ctx.reglas_servicio.get(codigo_activo)
     if not regla_serv:
         # Verificar si al menos un empleado tiene la regla activa de manera individual
         tiene_regla = False
         for emp in ctx.empleados:
             params = _re.resolver_parametros_regla(
-                'PESO_EQUIDAD_FSL', emp.nombre, ctx.fecha_inicio,
+                codigo_activo, emp.nombre, ctx.fecha_inicio,
                 ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
             )
             if not _re.regla_suspendida(params):
@@ -193,7 +194,7 @@ def apply(modelo, ctx):
                     fl4_mes.append(trabaja)
 
         params = _re.resolver_parametros_regla(
-            'PESO_EQUIDAD_FSL', emp.nombre, ctx.fecha_inicio,
+            codigo_activo, emp.nombre, ctx.fecha_inicio,
             ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
         )
         
