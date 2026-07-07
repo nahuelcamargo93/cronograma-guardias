@@ -1,5 +1,4 @@
-import database.connection as c
-conn = c.get_connection()
-tables = conn.execute("select name from sqlite_master where type='table'").fetchall()
-for t in sorted(tables):
-    print(t[0])
+import sqlite3
+conn = sqlite3.connect('cronograma_inteligente.db')
+print([r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()])
+conn.close()

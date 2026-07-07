@@ -11,3 +11,6 @@ ENV/
 .DS_Store
 .vscode/
 .idea/
+
+token.json
+client_secrets.json

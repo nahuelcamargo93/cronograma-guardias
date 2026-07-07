@@ -16,15 +16,15 @@ import rule_engine as _re
 # ==============================================================================
 
 # Enfermeria
-DEFAULT_SERVICIO_ID = 1
+DEFAULT_SERVICIO_ID = 2
 DEFAULT_FECHA_INICIO = "2026-08-01"
 DEFAULT_FECHA_FIN = None
-DEFAULT_MAX_TIME_IN_SECONDS = 60*30
+DEFAULT_MAX_TIME_IN_SECONDS = 200
 DEFAULT_CRONOGRAMA_BASE_ID = None
 DEFAULT_LOCK_FECHA_INICIO = None
 DEFAULT_LOCK_FECHA_FIN = None
 DEFAULT_DEBUG_SOFT = False
-DEFAULT_DEBUG_HARD = False
+DEFAULT_DEBUG_HARD = True
 DEFAULT_DIAGNOSE = False
 
 """
@@ -168,14 +168,13 @@ modo_debug_hard=False, exclusiones=None, lock_fecha_inicio=None, lock_fecha_fin=
                             if not tiene_franco:
                                 match = True
 
-                        if match:
-                            turno_config = asig['Turno'].replace(" ", "_")
-                            vars_coincidentes = [
-                                turnos[(nombre, dia, t)] for t in lista_turnos
-                                if (nombre, dia, t) in turnos and (t == turno_config or t.startswith(turno_config + "_"))
-                            ]
-                            if vars_coincidentes:
-                                modelo.Add(sum(vars_coincidentes) == 1)
+                        turno_config = asig['Turno'].replace(" ", "_")
+                        vars_coincidentes = [
+                            turnos[(nombre, dia, t)] for t in lista_turnos
+                            if (nombre, dia, t) in turnos and (t == turno_config or t.startswith(turno_config + "_"))
+                        ]
+                        if match and vars_coincidentes:
+                            modelo.Add(sum(vars_coincidentes) == 1)
             
             # 3. Un solo turno por día (Se delegó a la regla UN_TURNO_POR_DIA cargada desde el catálogo/BD)
             pass
@@ -444,23 +443,25 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_d
     )
 
     if df_resultados is None and modo_debug_hard:
-        if getattr(ctx, 'ultimo_status_solver', None) == cp_model.UNKNOWN:
+        status_previo = getattr(ctx, 'ultimo_status_solver', None)
+        if status_previo == cp_model.UNKNOWN:
             print("\n" + "="*75)
-            print("  [DEBUG HARD] OMITIDO: El modelo dio TIMEOUT (UNKNOWN) en lugar de INFEASIBLE.", flush=True)
-            print("  El modelo no es necesariamente inviable, sino que es complejo/lento de resolver.", flush=True)
-            print("  Se recomienda subir el tiempo límite (--timeout) o usar relajación (--debug-soft).", flush=True)
+            print("  [DEBUG HARD] ADVERTENCIA: El modelo dio TIMEOUT (UNKNOWN) en lugar de INFEASIBLE.", flush=True)
+            print("  Se intentará ejecutar el diagnóstico hard para detectar restricciones excesivas.", flush=True)
             print("="*75 + "\n")
-        else:
-            from restricciones.debug_hard import ejecutar_diagnostico_hard
             
-            codigos_reglas = list(getattr(ctx, 'reglas_duras_aplicadas', set()))
+        from restricciones.debug_hard import ejecutar_diagnostico_hard
+        
+        codigos_reglas = list(getattr(ctx, 'reglas_duras_aplicadas', set()))
                 
+        if True:
             def resolver_con_parametros(
                 excluir_reglas=None,
                 sin_licencias_de=None,
                 sin_reglas_de=None,
                 sin_ajustes_de=None,
-                exclusiones_adicionales=None
+                exclusiones_adicionales=None,
+                sin_ajustes_especificos=None
             ):
                 import copy
                 
@@ -488,8 +489,17 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_d
                         if k == '__servicio__':
                             ajustes_reglas_clon[k] = v
                         elif k not in sin_ajustes_de:
-                            ajustes_reglas_clon[k] = v
+                            ajustes_reglas_clon[k] = copy.deepcopy(v)
 
+                # Omitir ajustes específicos por índice si es necesario
+                if sin_ajustes_especificos:
+                    for nom, idxs in sin_ajustes_especificos.items():
+                        if nom in ajustes_reglas_clon:
+                            ajustes_reglas_clon[nom] = [
+                                adj for idx, adj in enumerate(ajustes_reglas_clon[nom])
+                                if idx not in idxs
+                            ]
+ 
                 # Exclusiones de reglas en ctx
                 exclusiones_dict = set()
                 if excluir_reglas:
@@ -533,7 +543,7 @@ def ejecutar_optimizacion(servicio_id, fecha_inicio, fecha_fin, notas="", modo_d
                 
                 return viable
                 
-            ejecutar_diagnostico_hard(empleados, codigos_reglas, resolver_con_parametros)
+            ejecutar_diagnostico_hard(empleados, codigos_reglas, resolver_con_parametros, ajustes_reglas)
 
     if df_resultados is None and not modo_debug and diagnose:
         print("Re-ejecutando modelo con assumptions activas para identificar conflicto...")

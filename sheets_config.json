@@ -1,0 +1,39 @@
+{
+  "_comentario": "Completar api_key y spreadsheet_id de cada servicio antes de ejecutar sincronizar_sheets.py",
+  "api_key": "AIzaSyCWPsqv2Ao7-5t5NOGFxo0NPECBnNb4zxA",
+  "drive": {
+    "client_secrets_file": "client_secrets.json",
+    "token_file": "token.json"
+  },
+  "servicios": {
+    "1": {
+      "spreadsheet_id": "PEGAR_SPREADSHEET_ID_SERVICIO_1",
+      "pestana_francos": "francos forzados",
+      "pestana_asignaciones": "asignaciones fijas",
+      "pestana_licencias": "licencias",
+      "folder_id": "PEGAR_ID_CARPETA_DRIVE_SERVICIO_1"
+    },
+    "2": {
+      "spreadsheet_id": "1KvMRlYeKNpB5jknQHRnthGJ8g9YUjxYMAn2-iyYUBws",
+      "pestana_francos": "francos forzados",
+      "pestana_asignaciones": "",
+      "pestana_licencias": "licencias",
+      "pestana_exclusiones": "exclusion turnos",
+      "folder_id": "1c24SX0JrA_u35JCr3SYf1bQQcSlL3b_v"
+    },
+    "3": {
+      "spreadsheet_id": "10g8hN8pcw25EWThvbbpO6LaWbK5FW4xpZVpZQLJZUS4",
+      "pestana_francos": "francos forzados",
+      "pestana_asignaciones": "asignaciones fijas",
+      "pestana_licencias": "licencias",
+      "folder_id": "1GIiaOW-wtqBkzCYvR_urvZ5udke5Aj_S"
+    },
+    "4": {
+      "spreadsheet_id": "1YfLkkEqHNsl3Iz3gfBr1cXTiv5MEiPKAESxgdU7PtKY",
+      "pestana_francos": "francos forzados",
+      "pestana_asignaciones": "asignaciones fijas",
+      "pestana_licencias": "licencias",
+      "folder_id": "16Yev6VszALZnNvpSt8Nmtr3fkwLc0yYq"
+    }
+  }
+}

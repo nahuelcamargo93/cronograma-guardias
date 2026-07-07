@@ -1,0 +1,411 @@
+=== REPORTE DETALLADO DE INFRACCIONES - CRONOGRAMA 610 ===
+Regla: DISTANCIA_MINIMA_TIPO_SEMANA (mínimo 3 semanas libres entre asignaciones)
+
+--- TURNO NOCHE (N) (Total violaciones: 25) ---
+Empleado: ALBELO TANIA
+  Semanas detectadas con N: ['2026-07-06', '2026-07-20']
+  Ventana: 2026-07-06 -> secuencia: [1, 0, 1, 0]
+  Tipo de detección: computed
+
+Empleado: ALBELO TANIA
+  Semanas detectadas con N: ['2026-07-20', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: BORIA MAYRA
+  Semanas detectadas con N: ['2026-07-27', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: BORIA MAYRA
+  Semanas detectadas con N: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CALDERON MARIA JOSE
+  Semanas detectadas con N: ['2026-07-20', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CAMPOS PRISCILA
+  Semanas detectadas con N: ['2026-07-13', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CAMPOS PRISCILA
+  Semanas detectadas con N: ['2026-08-03', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CORIA LUCIANO
+  Semanas detectadas con N: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ESCALANTE CARLA
+  Semanas detectadas con N: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ESCUDERO SERGIO
+  Semanas detectadas con N: ['2026-07-20', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ESCUDERO SERGIO
+  Semanas detectadas con N: ['2026-08-03', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: FERNANDEZ YESICA
+  Semanas detectadas con N: ['2026-07-13', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: FERNANDEZ YESICA
+  Semanas detectadas con N: ['2026-08-03', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GUIÑAZU KARINA
+  Semanas detectadas con N: ['2026-07-20', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [0, 0, 1, 1]
+  Tipo de detección: computed
+
+Empleado: MAÑE LORENA
+  Semanas detectadas con N: ['2026-07-06', '2026-07-13', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [1, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: MAÑE LORENA
+  Semanas detectadas con N: ['2026-07-13', '2026-07-27']
+  Ventana: 2026-07-13 -> secuencia: [1, 0, 1, 0]
+  Tipo de detección: computed
+
+Empleado: MIRANDA LUCIANA
+  Semanas detectadas con N: ['2026-08-10', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: OLGUIN LUCIA
+  Semanas detectadas con N: ['2026-08-03', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: PALACIOS FACUNDO
+  Semanas detectadas con N: ['2026-08-10', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: PALANA GRACIELA
+  Semanas detectadas con N: ['2026-07-20', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: PEREIRA CRISTINA
+  Semanas detectadas con N: ['2026-07-20', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: POLETTI NATALIA
+  Semanas detectadas con N: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: db
+
+Empleado: QUEVEDO CELESTE
+  Semanas detectadas con N: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: VELIZ LIONEL
+  Semanas detectadas con N: ['2026-07-27', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: VELIZ LIONEL
+  Semanas detectadas con N: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+
+--- TARDE NOCHE (TN) (Total violaciones: 56) ---
+Empleado: ALBELO TANIA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ALBELO TANIA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ALCARAZ ELIANA
+  Semanas detectadas con TN: ['2026-08-03', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ALCARAZ ELIANA
+  Semanas detectadas con TN: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ALCARAZ FRANCISO
+  Semanas detectadas con TN: ['2026-07-20', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ALCARAZ FRANCISO
+  Semanas detectadas con TN: ['2026-08-03', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ASTUDILLO MELINA
+  Semanas detectadas con TN: ['2026-08-03', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ASTUDILLO MELINA
+  Semanas detectadas con TN: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: BARROSO ERICA
+  Semanas detectadas con TN: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: BORIA MAYRA
+  Semanas detectadas con TN: ['2026-07-20', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CALDERON MARIA JOSE
+  Semanas detectadas con TN: ['2026-07-06', '2026-07-13']
+  Ventana: 2026-07-06 -> secuencia: [1, 1, 0, 0]
+  Tipo de detección: computed
+
+Empleado: CAMPOS PRISCILA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CAMPOS PRISCILA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CARRERAS FLAVIA
+  Semanas detectadas con TN: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: CHIRINO CAROLINA
+  Semanas detectadas con TN: ['2026-07-13', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: DURAN JAZMIN
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: DURAN JAZMIN
+  Semanas detectadas con TN: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ECHENIQUE ROCIO
+  Semanas detectadas con TN: ['2026-07-13', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ECHENIQUE ROCIO
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: ESCALANTE CARLA
+  Semanas detectadas con TN: ['2026-07-06', '2026-07-13']
+  Ventana: 2026-07-06 -> secuencia: [1, 1, 0, 0]
+  Tipo de detección: computed
+
+Empleado: FERNANDEZ PAOLA
+  Semanas detectadas con TN: ['2026-07-13', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: FERNANDEZ PAOLA
+  Semanas detectadas con TN: ['2026-08-03', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: FERNANDEZ YESICA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GIMENEZ KAREN
+  Semanas detectadas con TN: ['2026-08-03', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GOMES STHEFANIA
+  Semanas detectadas con TN: ['2026-07-13', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GOMES STHEFANIA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GOMES STHEFANIA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GOMEZ LOURDES
+  Semanas detectadas con TN: ['2026-07-20', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GOMEZ LOURDES
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GRABOVIECKI FERNANDA
+  Semanas detectadas con TN: ['2026-07-06', '2026-07-20']
+  Ventana: 2026-07-06 -> secuencia: [1, 0, 1, 0]
+  Tipo de detección: computed
+
+Empleado: GRABOVIECKI FERNANDA
+  Semanas detectadas con TN: ['2026-07-20', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: GRABOVIECKI FERNANDA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: MAÑE LORENA
+  Semanas detectadas con TN: ['2026-07-20', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: MAÑE LORENA
+  Semanas detectadas con TN: ['2026-08-03', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: MAÑE LORENA
+  Semanas detectadas con TN: ['2026-08-17', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: MIRANDA LUCIANA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: NIEVAS CARLA
+  Semanas detectadas con TN: ['2026-07-06', '2026-07-20']
+  Ventana: 2026-07-06 -> secuencia: [1, 0, 1, 0]
+  Tipo de detección: computed
+
+Empleado: NIEVAS CARLA
+  Semanas detectadas con TN: ['2026-07-20', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: NIEVAS CARLA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-31']
+  Ventana: 2026-08-10 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: PALACIOS FACUNDO
+  Semanas detectadas con TN: ['2026-07-13', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: PALANA GRACIELA
+  Semanas detectadas con TN: ['2026-07-06', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: PALANA GRACIELA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: POLETTI NATALIA
+  Semanas detectadas con TN: ['2026-07-06', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: POLETTI NATALIA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: POLETTI NATALIA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-10', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 1, 1]
+  Tipo de detección: computed
+
+Empleado: POLETTI NATALIA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-17', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 1, 1]
+  Tipo de detección: computed
+
+Empleado: POLETTI NATALIA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: db
+
+Empleado: RINALDINI IVANA
+  Semanas detectadas con TN: ['2026-07-06', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: RINALDINI IVANA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: RINALDINI IVANA
+  Semanas detectadas con TN: ['2026-08-10', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: SOSA NAHUEL
+  Semanas detectadas con TN: ['2026-07-13', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: SOSA NAHUEL
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-17']
+  Ventana: 2026-07-27 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: SUAREZ JESICA
+  Semanas detectadas con TN: ['2026-07-20', '2026-08-03']
+  Ventana: 2026-07-13 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: SUAREZ JESICA
+  Semanas detectadas con TN: ['2026-08-03', '2026-08-24']
+  Ventana: 2026-08-03 -> secuencia: [1, 0, 0, 1]
+  Tipo de detección: computed
+
+Empleado: TULA DAIANA
+  Semanas detectadas con TN: ['2026-07-13', '2026-07-27']
+  Ventana: 2026-07-06 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+
+Empleado: TULA DAIANA
+  Semanas detectadas con TN: ['2026-07-27', '2026-08-10']
+  Ventana: 2026-07-20 -> secuencia: [0, 1, 0, 1]
+  Tipo de detección: computed
+

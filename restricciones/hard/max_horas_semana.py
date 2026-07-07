@@ -11,7 +11,7 @@ def apply(modelo, ctx) -> None:
     historial = ctx.historial_semana_previa or {}
 
     if 'MAX_HORAS_SEMANA' not in ctx.reglas_servicio:
-        raise ValueError("❌ ERROR CRÍTICO: La regla 'MAX_HORAS_SEMANA' no está configurada en la BD.")
+        return
     limite_global = ctx.reglas_servicio['MAX_HORAS_SEMANA'].get('limite', 48)
 
     for emp in ctx.empleados:

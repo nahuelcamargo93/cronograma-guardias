@@ -63,12 +63,16 @@ graph TD
 
 ---
 
-## 4. Infraestructura de Doble Red de Seguridad
+## 4. Infraestructura de Red de Seguridad & Diagnóstico
 
 El motor incluye un sistema de diagnóstico integrado administrado por [cargador.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/restricciones/cargador.py):
 
 * **Assumptions (Modo Normal):** Cada regla se ejecuta con una variable de suposición (`OnlyEnforceIf(REG_REGLA)`). Si el solver determina que el modelo es `INFEASIBLE`, se consulta el conflicto (`SufficientAssumptionsForInfeasibility()`) y se imprimen en consola las reglas exactas que causaron la colisión matemática.
-* **Modo Debug (Relajación):** Si se ejecuta con la bandera `--debug`, las restricciones duras se desactivan y se transforman en variables de violación penalizadas con un peso extremo (`PESO_DEBUG = 10_000_000`) en la función objetivo. Esto garantiza que el cronograma **siempre se resuelva**, mostrando visualmente en una pestaña especial de Excel (`Infracciones (DEBUG)`) qué regla se tuvo que violar y en qué empleado/día para lograr la viabilidad.
+* **Modo Debug Soft (Relajación):** Si se ejecuta con la bandera `--debug-soft`, las restricciones duras se desactivan y se transforman en variables de violación penalizadas con un peso extremo (`PESO_DEBUG = 10_000_000`) en la función objetivo. Esto garantiza que el cronograma **siempre se resuelva**, mostrando visualmente en una pestaña especial de Excel (`Infracciones (DEBUG)`) qué regla se tuvo que violar y en qué empleado/día para lograr la viabilidad.
+* **Modo Debug Hard (Diagnóstico Iterativo):** Si se ejecuta con la bandera `--debug-hard`, se activa el algoritmo de encendido progresivo en [debug_hard.py](file:///c:/Users/asus/Desktop/Ryoko/cronograma_inteligente/restricciones/debug_hard.py):
+  1. **Paso 0 (Capacidad Básica):** Verifica si el plantel sin ninguna regla puede cubrir la demanda de turnos.
+  2. **Paso 1 (Personal Puro):** Evalúa la viabilidad del personal con sus licencias y ajustes activos pero sin reglas globales. Si quiebra, aísla progresivamente qué profesional y qué ajuste o franco forzado específico causa la inviabilidad.
+  3. **Paso 2 (Reglas Globales):** Enciende dinámicamente las reglas globales del servicio sobre la plantilla real. Si detecta una colisión multifactorial (ej: `MAX_HORAS_SEMANA` <=> `MANEJO_FINDES`), evalúa si la colisión es catalizada por restricciones de un profesional y realiza un micro-diagnóstico detallado para encontrar el ajuste individual o franco forzado de base de datos culpable (ej: las exclusiones de Yésica Fernández).
 
 ---
 

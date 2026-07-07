@@ -70,12 +70,31 @@ def resolver_parametros_regla(
     # Tiene prioridad absoluta. Si hay un ajuste activo para esta persona y fecha,
     # se aplica sin importar lo que digan las reglas base.
     if ajustes_personal and nombre in ajustes_personal:
+        coincidentes = []
         for aj in ajustes_personal[nombre]:
             if aj['codigo_regla'] == codigo_regla and aj['fecha_inicio'] <= fecha_str <= aj['fecha_fin']:
                 if aj['accion'] == 'SUSPENDER':
                     return None          # regla completamente desactivada para este período
                 if aj['accion'] == 'SOBRESCRIBIR':
-                    return aj['params'] or {}   # nuevos parámetros para este período
+                    coincidentes.append(aj['params'])
+        if coincidentes:
+            if codigo_regla in (
+                'EXCLUIR_TURNOS', 'MAX_TURNOS', 'MIN_TURNOS', 'ASIGNACION_FIJA',
+                'PENALIZACION_TURNO', 'TURNOS_PREFERENCIALES'
+            ):
+                combinado = []
+                for p in coincidentes:
+                    if isinstance(p, list):
+                        combinado.extend(p)
+                    elif isinstance(p, dict):
+                        combinado.append(p)
+                return combinado
+            else:
+                combinado = {}
+                for p in coincidentes:
+                    if isinstance(p, dict):
+                        combinado.update(p)
+                return combinado
 
     # ─── 2. REGLA PERSONAL ────────────────────────────────────────────────────
     # Configuración individual que no tiene límite de tiempo.
@@ -94,12 +113,31 @@ def resolver_parametros_regla(
     if ajustes_personal and '__servicio__' in ajustes_personal:
         ajustes_servicio = ajustes_personal['__servicio__']
         if isinstance(ajustes_servicio, dict) and codigo_regla in ajustes_servicio:
+            coincidentes = []
             for aj in ajustes_servicio[codigo_regla]:
                 if aj['fecha_inicio'] <= fecha_str <= aj['fecha_fin']:
                     if aj['accion'] == 'SUSPENDER':
                         return None
                     if aj['accion'] == 'SOBRESCRIBIR':
-                        return aj['params'] or {}
+                        coincidentes.append(aj['params'])
+            if coincidentes:
+                if codigo_regla in (
+                    'EXCLUIR_TURNOS', 'MAX_TURNOS', 'MIN_TURNOS', 'ASIGNACION_FIJA',
+                    'PENALIZACION_TURNO', 'TURNOS_PREFERENCIALES'
+                ):
+                    combinado = []
+                    for p in coincidentes:
+                        if isinstance(p, list):
+                            combinado.extend(p)
+                        elif isinstance(p, dict):
+                            combinado.append(p)
+                    return combinado
+                else:
+                    combinado = {}
+                    for p in coincidentes:
+                        if isinstance(p, dict):
+                            combinado.update(p)
+                    return combinado
 
     # ─── 4. REGLA DE SERVICIO / ORGANIZACIÓN ─────────────────────────────────
     # cargar_reglas_servicio() ya fusiona organización y servicio,

@@ -14,6 +14,29 @@ def apply(modelo, ctx):
     fecha_inicio_dt = date.fromisoformat(ctx.fecha_inicio)
 
     for emp in ctx.empleados:
+        def _es_franco_forzado_sin_fija_fecha(d_idx):
+            if d_idx < 0 or d_idx >= ctx.dias:
+                return False
+            fecha_d_str = (fecha_inicio_dt + timedelta(days=d_idx)).isoformat()
+            p = _re.resolver_parametros_regla(
+                'FRANCO_FORZADO', emp.nombre, fecha_d_str,
+                ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+            )
+            tiene_franco = _re.regla_existe(p) and not _re.regla_suspendida(p)
+
+            tiene_fija_fecha = False
+            params_fija = _re.resolver_parametros_regla(
+                'ASIGNACION_FIJA', emp.nombre, fecha_d_str,
+                ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
+            )
+            if _re.regla_existe(params_fija) and isinstance(params_fija, list):
+                for asig in params_fija:
+                    if asig.get('Fecha') == fecha_d_str:
+                        tiene_fija_fecha = True
+                        break
+
+            return tiene_franco and not tiene_fija_fecha
+
         params = _re.resolver_parametros_regla(
             'FINDE_LARGO_REGLAMENTARIO', emp.nombre, ctx.fecha_inicio,
             ctx.reglas_servicio, emp.reglas, ctx.ajustes_reglas_personal
@@ -91,56 +114,63 @@ def apply(modelo, ctx):
             if not vars_bloque:
                 continue
 
+            # Verificar si este bloque libre es forzado por el usuario mediante FRANCO_FORZADO
+            forzado_por_usuario = all(_es_franco_forzado_sin_fija_fecha(d_e) for d_e in dias_obj if 0 <= d_e < ctx.dias)
+
             tipo_str = pref_activo
             tiene_flr = modelo.NewBoolVar(f'flr_{tipo_str}_{emp.nombre}_d{d}')
             
-            conds_flr = []
-            
-            libre = modelo.NewBoolVar(f'libre_{tipo_str}_{emp.nombre}_d{d}')
-            modelo.Add(sum(vars_bloque) == 0).OnlyEnforceIf(libre)
-            modelo.Add(sum(vars_bloque) > 0).OnlyEnforceIf(libre.Not())
-            conds_flr.append(libre)
+            if forzado_por_usuario:
+                modelo.Add(tiene_flr == 1)
+                modelo.Add(sum(vars_bloque) == 0)
+            else:
+                conds_flr = []
+                
+                libre = modelo.NewBoolVar(f'libre_{tipo_str}_{emp.nombre}_d{d}')
+                modelo.Add(sum(vars_bloque) == 0).OnlyEnforceIf(libre)
+                modelo.Add(sum(vars_bloque) > 0).OnlyEnforceIf(libre.Not())
+                conds_flr.append(libre)
 
-            # Restricción adyacente: si tiene FLR, trabaja el día anterior y posterior
-            if d - 1 >= 0:
-                es_f_p = ((d - 1 + ctx.offset_dia) % 7 >= 5) or (d - 1 in ctx.feriados)
-                vars_prev = [
-                    ctx.turnos[(emp.nombre, d - 1, t)]
-                    for t in ctx.demanda_turnos.get(
-                        'Finde_Feriado' if es_f_p else 'Semana', {}
-                    ).keys()
-                    if (emp.nombre, d - 1, t) in ctx.turnos
-                ]
-                if vars_prev:
-                    prev_ok = modelo.NewBoolVar(f'prev_ok_{tipo_str}_{emp.nombre}_d{d}')
-                    modelo.Add(sum(vars_prev) == 1).OnlyEnforceIf(prev_ok)
-                    modelo.Add(sum(vars_prev) != 1).OnlyEnforceIf(prev_ok.Not())
-                    conds_flr.append(prev_ok)
+                # Restricción adyacente: si tiene FLR, trabaja el día anterior y posterior
+                if d - 1 >= 0:
+                    es_f_p = ((d - 1 + ctx.offset_dia) % 7 >= 5) or (d - 1 in ctx.feriados)
+                    vars_prev = [
+                        ctx.turnos[(emp.nombre, d - 1, t)]
+                        for t in ctx.demanda_turnos.get(
+                            'Finde_Feriado' if es_f_p else 'Semana', {}
+                        ).keys()
+                        if (emp.nombre, d - 1, t) in ctx.turnos
+                    ]
+                    if vars_prev:
+                        prev_ok = modelo.NewBoolVar(f'prev_ok_{tipo_str}_{emp.nombre}_d{d}')
+                        modelo.Add(sum(vars_prev) == 1).OnlyEnforceIf(prev_ok)
+                        modelo.Add(sum(vars_prev) != 1).OnlyEnforceIf(prev_ok.Not())
+                        conds_flr.append(prev_ok)
+                    else:
+                        conds_flr.append(modelo.NewConstant(0))
                 else:
                     conds_flr.append(modelo.NewConstant(0))
-            else:
-                conds_flr.append(modelo.NewConstant(0))
 
-            if d + 4 < ctx.dias:
-                es_f_po = ((d + 4 + ctx.offset_dia) % 7 >= 5) or (d + 4 in ctx.feriados)
-                vars_post = [
-                    ctx.turnos[(emp.nombre, d + 4, t)]
-                    for t in ctx.demanda_turnos.get(
-                        'Finde_Feriado' if es_f_po else 'Semana', {}
-                    ).keys()
-                    if (emp.nombre, d + 4, t) in ctx.turnos
-                ]
-                if vars_post:
-                    post_ok = modelo.NewBoolVar(f'post_ok_{tipo_str}_{emp.nombre}_d{d}')
-                    modelo.Add(sum(vars_post) == 1).OnlyEnforceIf(post_ok)
-                    modelo.Add(sum(vars_post) != 1).OnlyEnforceIf(post_ok.Not())
-                    conds_flr.append(post_ok)
+                if d + 4 < ctx.dias:
+                    es_f_po = ((d + 4 + ctx.offset_dia) % 7 >= 5) or (d + 4 in ctx.feriados)
+                    vars_post = [
+                        ctx.turnos[(emp.nombre, d + 4, t)]
+                        for t in ctx.demanda_turnos.get(
+                            'Finde_Feriado' if es_f_po else 'Semana', {}
+                        ).keys()
+                        if (emp.nombre, d + 4, t) in ctx.turnos
+                    ]
+                    if vars_post:
+                        post_ok = modelo.NewBoolVar(f'post_ok_{tipo_str}_{emp.nombre}_d{d}')
+                        modelo.Add(sum(vars_post) == 1).OnlyEnforceIf(post_ok)
+                        modelo.Add(sum(vars_post) != 1).OnlyEnforceIf(post_ok.Not())
+                        conds_flr.append(post_ok)
+                    else:
+                        conds_flr.append(modelo.NewConstant(0))
                 else:
                     conds_flr.append(modelo.NewConstant(0))
-            else:
-                conds_flr.append(modelo.NewConstant(0))
 
-            modelo.AddMinEquality(tiene_flr, conds_flr)
+                modelo.AddMinEquality(tiene_flr, conds_flr)
 
             todas.append(tiene_flr)
             

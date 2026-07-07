@@ -1,0 +1,76 @@
+
+sincro ver que valide si hay guardia que tiene excluidas
+
+que los tipos de licencia se puedan simplemente agregar en la base de datos. (a un tunro bool es liencia?)
+
+debugger hard? que vea la demando por puesto y por franja
+
+revisar feriados enfermeria
+
+actualizar personal com
+
+turnos por categoria?
+
+
+migrar todo lo de personal ajustes a personal reglas
+
+deamnda ajustes tien ecolumna cantidad
+
+revisar el importado de enfermeria con los feriados
+
+ver bien los improtadores y exportadores
+
+max horas por semana debe ser obligatorio?
+
+agregar logs
+
+
+
+--
+
+para enfemreria agosto tuve que bajar demanda de tarde a 8, que tenga en cuenta eso cuando haga sun mes, lo que queda de semana. 
+
+
+
+
+ENFERMERIA ---
+Debugegr hard, no me detectaba en el paso 1 el conflcito que venia de manejo findes (en realidad aca el conflicto era palana
+si estaba apagado el crono 583, creamos el 607 para solo con la guardia de palana y da viable. )
+Exactamente lo que pasa es que el franco forzado de palama me da inviabilidad si tengo activo menjo findes.
+Ahora si activo el crono paso me da inviable aunque no le ponga ese franco a palana... hay que estudiar porque, segun el ultimo 
+chat lo rompe julio que ya no cumple esa regla. 
+
+Seguir en conversacion: iba en "Investigación Debugger Regla Findes" pero me confundi y me cruce a "Gestión De Roles Y Puestos"
+
+
+Ahora me da con DISTANCIA MINIMA apagado o en soft, deje corriendo en soft a ver que me hace,
+
+-----
+
+cambiar null por franco??
+
+resumen_continuidad_crono.md
+ 
+
+
+
+---
+agregar que enfermeria no se pueda hacer 2 guardias seguidas de 12 hs. (menos polleti)
+agregar que la kari haga las de 12 el finde
+
+----
+
+
+poner en system prompt que me de explicacionde logicas, no tanto tecnicas. 
+explicar que es destilado de chat. 
+
+
+
+---
+
+Bypass del Debugger (FRANCO_FORZADO): La función prohibir_turnos_dia de 
+
+_utils.py
+ usa modelo.Add(...) directamente en lugar de add_hard(...). Esto impide que los francos forzados se relajen en --debug-soft, arrojando una inviabilidad inmediata.
+
+                                                                                                                                                                                                                                                                             

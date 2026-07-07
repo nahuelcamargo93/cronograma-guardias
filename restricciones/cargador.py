@@ -329,9 +329,12 @@ def ejecutar_reglas(modelo, ctx, modulos: list[str]) -> None:
         modulos : lista de strings con rutas Python de los módulos a ejecutar
     """
     for ruta_modulo in modulos:
-        modulo = importlib.import_module(ruta_modulo)
         # Derivar un código de regla limpio del nombre del módulo
         codigo = ruta_modulo.rsplit('.', 1)[-1].upper()
+        if (codigo, None) in getattr(ctx, 'exclusiones', set()):
+            continue  # Completamente excluido, no ejecutar
+
+        modulo = importlib.import_module(ruta_modulo)
         ctx.codigo_regla = codigo
         preparar_assumption(modelo, ctx, codigo)
         modulo.apply(modelo, ctx)

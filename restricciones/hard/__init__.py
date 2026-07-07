@@ -27,6 +27,7 @@ REGLAS_HARD = [
     "restricciones.hard.fechas_especiales",
     "restricciones.hard.puestos_solo_fijos",
     "restricciones.hard.solo_asignaciones_fijas",
+    "restricciones.hard.asignacion_fija_obligatoria",
 
     # 2. Cobertura y demanda (el motor depende de estas para ser feasible)
     "restricciones.hard.cobertura_dinamica",
